@@ -7,15 +7,24 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
 
-# Create async engine
-# Note: SQLite connection needs connect_args for multithreading / async safety
-connect_args = {"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {}
+# Database connection configuration
+db_url = settings.async_database_url
+is_sqlite = db_url.startswith("sqlite")
+
+connect_args = {"check_same_thread": False} if is_sqlite else {}
+engine_kwargs = {"connect_args": connect_args, "future": True, "echo": False}
+
+# Enable connection pooling for PostgreSQL
+if not is_sqlite:
+    engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_pre_ping": True,
+    })
 
 engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    future=True,
-    connect_args=connect_args
+    db_url,
+    **engine_kwargs
 )
 
 # Async session factory

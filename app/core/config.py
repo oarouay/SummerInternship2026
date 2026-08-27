@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Optional, Union
 from pydantic import AnyHttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
@@ -13,8 +13,22 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
     
-    # Database
-    DATABASE_URL: str = "sqlite+aiosqlite:///./sql_app.db"
+    # Database (PostgreSQL via asyncpg)
+    POSTGRES_SERVER: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_DB: str = "multitenant_db"
+    
+    # Custom DATABASE_URL override if provided; otherwise constructed from POSTGRES_* fields
+    DATABASE_URL: Optional[str] = None
+
+    @property
+    def async_database_url(self) -> str:
+        """Returns the async database connection string."""
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
+        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
     
     # CORS Origins
     BACKEND_CORS_ORIGINS: Union[List[str], str] = [
