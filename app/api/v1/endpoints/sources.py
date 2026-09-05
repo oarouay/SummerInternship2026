@@ -12,7 +12,8 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.chunk import DocumentChunkResponse
 from app.schemas.search import SearchQuery, SearchResult
-from app.schemas.source import RawTextCreate, SourceResponse
+from app.schemas.source import RawTextCreate, SourceResponse, URLCrawlRequest
+from app.services.crawler import fetch_and_clean_url
 from app.services.embedding import get_embedding_service
 from app.services.pipeline import process_source_pipeline
 from app.services.search import search_similar_chunks
@@ -108,6 +109,55 @@ async def ingest_raw_text(
     await db.flush()
 
     # Trigger asynchronous parsing & chunking pipeline
+    background_tasks.add_task(process_source_pipeline, source.id)
+    return source
+
+
+@router.post(
+    "/crawl",
+    response_model=SourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Crawl and index a public webpage URL with SSRF protection"
+)
+async def crawl_url(
+    payload: URLCrawlRequest,
+    background_tasks: BackgroundTasks,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Crawls a public web page, extracts readable text with SSRF protection,
+    and enqueues it for vector embedding and knowledge graph indexing.
+    """
+    try:
+        page_title, text_content = await fetch_and_clean_url(payload.url)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to crawl URL: {str(e)}"
+        )
+
+    doc_name = payload.name or page_title
+    source = Source(
+        name=doc_name[:255],
+        source_type=SourceType.URL.value,
+        status=SourceStatus.PENDING.value,
+        mime_type="text/html",
+        file_path=payload.url,
+        file_size=len(text_content.encode("utf-8")),
+        raw_content=text_content,
+        tenant_id=tenant.id,
+        owner_id=current_user.id
+    )
+    db.add(source)
+    await db.flush()
+
     background_tasks.add_task(process_source_pipeline, source.id)
     return source
 

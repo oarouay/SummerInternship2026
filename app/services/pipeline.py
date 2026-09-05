@@ -42,7 +42,7 @@ async def process_source_pipeline(source_id: int) -> None:
                 if not source.file_path:
                     raise ValueError("File source missing file path on disk.")
                 extracted_text = parse_document(source.file_path, source.mime_type)
-            elif source.source_type == SourceType.RAW_TEXT.value:
+            elif source.source_type in (SourceType.RAW_TEXT.value, SourceType.URL.value):
                 extracted_text = source.raw_content or ""
             else:
                 raise ValueError(f"Unsupported source type: {source.source_type}")

@@ -20,6 +20,21 @@ class RawTextCreate(BaseModel):
     )
 
 
+class URLCrawlRequest(BaseModel):
+    url: str = Field(
+        ...,
+        min_length=8,
+        max_length=1000,
+        examples=["https://fastapi.tiangolo.com/tutorial/"],
+        description="Public HTTP/HTTPS web page URL to crawl and index"
+    )
+    name: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Optional custom title for the crawled source"
+    )
+
+
 class SourceResponse(BaseModel):
     id: int
     name: str

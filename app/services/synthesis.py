@@ -70,7 +70,10 @@ class BaseRAGSynthesizer(ABC):
         query: str,
         chunks: List[SearchResult],
         graph: GraphNeighborhoodResponse,
-        temperature: float = 0.2
+        temperature: float = 0.2,
+        conversation_history: Optional[List[dict]] = None,
+        persona_tone: Optional[str] = None,
+        custom_system_prompt: Optional[str] = None,
     ) -> str:
         """Synthesizes a grounded answer from fused vector and graph context."""
         pass
@@ -87,7 +90,10 @@ class MockRAGSynthesizer(BaseRAGSynthesizer):
         query: str,
         chunks: List[SearchResult],
         graph: GraphNeighborhoodResponse,
-        temperature: float = 0.2
+        temperature: float = 0.2,
+        conversation_history: Optional[List[dict]] = None,
+        persona_tone: Optional[str] = None,
+        custom_system_prompt: Optional[str] = None,
     ) -> str:
         if not chunks and not graph.edges and not graph.nodes:
             return "Based on your organization's knowledge base, there is insufficient information to answer this question."
@@ -104,6 +110,9 @@ class MockRAGSynthesizer(BaseRAGSynthesizer):
             top_chunk = chunks[0]
             snippet = top_chunk.content[:180].strip().replace("\n", " ")
             parts.append(f"Referencing \"{top_chunk.source_name}\": {snippet}...")
+
+        if conversation_history:
+            parts.append(f"(Follow-up to previous {len(conversation_history)} messages)")
 
         return " ".join(parts)
 
@@ -124,14 +133,20 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
         query: str,
         chunks: List[SearchResult],
         graph: GraphNeighborhoodResponse,
-        temperature: float = 0.2
+        temperature: float = 0.2,
+        conversation_history: Optional[List[dict]] = None,
+        persona_tone: Optional[str] = None,
+        custom_system_prompt: Optional[str] = None,
     ) -> str:
         if not chunks and not graph.edges and not graph.nodes:
             return "Based on your organization's knowledge base, there is insufficient information to answer this question."
 
         context_str = build_fusion_context(chunks, graph)
 
-        system_instruction = """
+        tone_directive = f"\n6. Persona & Tone: You MUST respond in a {persona_tone} tone." if persona_tone else ""
+        custom_directive = f"\n7. Specific Tenant Guidance: {custom_system_prompt}" if custom_system_prompt else ""
+
+        system_instruction = f"""
         You are the AI Knowledge Engine for an enterprise organization.
         Answer the user's question accurately and objectively using ONLY the provided verified context.
 
@@ -141,15 +156,21 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
            "Based on your organization's knowledge base, there is insufficient information to answer this question."
         3. Do NOT extrapolate, speculate, or fabricate details.
         4. Synthesize across both text passages and graph relationships when answering.
-        5. When citing facts, mention the document name or the relationship triple.
+        5. When citing facts, mention the document name or the relationship triple.{tone_directive}{custom_directive}
         """
+
+        history_section = ""
+        if conversation_history:
+            recent_turns = conversation_history[-6:]
+            formatted_turns = "\n".join([f"{msg['role'].capitalize()}: {msg['content']}" for msg in recent_turns])
+            history_section = f"\n\nRECENT CONVERSATION HISTORY:\n{formatted_turns}\n"
 
         prompt = f"""
         {system_instruction}
 
         CONTEXT INFORMATION:
         {context_str}
-
+        {history_section}
         USER QUESTION:
         {query}
 
@@ -165,7 +186,9 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
             return response.text.strip()
         except Exception as e:
             logger.exception(f"Gemini RAG synthesis failed: {e}. Falling back to mock synthesizer.")
-            return await MockRAGSynthesizer().synthesize(query, chunks, graph, temperature)
+            return await MockRAGSynthesizer().synthesize(
+                query, chunks, graph, temperature, conversation_history, persona_tone, custom_system_prompt
+            )
 
 
 def get_rag_synthesizer() -> BaseRAGSynthesizer:
@@ -203,7 +226,10 @@ class RAGPipelineService:
         top_k_chunks: int = 4,
         max_graph_hops: int = 2,
         temperature: float = 0.2,
-        source_id: Optional[int] = None
+        source_id: Optional[int] = None,
+        conversation_history: Optional[List[dict]] = None,
+        persona_tone: Optional[str] = None,
+        custom_system_prompt: Optional[str] = None,
     ) -> RAGQueryResponse:
         start_time = time.perf_counter()
 
@@ -241,7 +267,10 @@ class RAGPipelineService:
             query=query,
             chunks=chunks,
             graph=graph_response,
-            temperature=temperature
+            temperature=temperature,
+            conversation_history=conversation_history,
+            persona_tone=persona_tone,
+            custom_system_prompt=custom_system_prompt,
         )
 
         # Step 5: Format Verifiable Citations

@@ -371,7 +371,56 @@ To prevent the LLM from hallucinating answers when information is missing:
 
 ---
 
-## 9. Summary Table of Architectural Decisions & Tradeoffs
+## 9. Pillar 8: Multi-Turn Conversation Memory & Chatbot Personalization
+
+### Conversational Continuity
+In an enterprise chatbot, questions rarely happen in isolation. Users naturally ask follow-up questions:
+* Turn 1: *"What does Project Titan depend on?"* $\rightarrow$ *"It depends on Hydra Auth."*
+* Turn 2: *"Is it vulnerable to any security issues?"*
+
+Without conversation history, the LLM has no idea what "it" refers to.
+We designed a two-tiered conversation model:
+* **`Conversation`**: Maintains tenant ownership, user reference, title, and session timestamps.
+* **`ChatMessage`**: Stores role (`user` vs `assistant`), text content, and `citations_json` serializing the exact vector chunk references and knowledge graph triples that informed that specific turn.
+
+When the user asks a follow-up, the last $N$ turns are formatted and injected into the prompt, enabling seamless coreference resolution while keeping context window costs low.
+
+### Tenant Persona & Custom Instructions
+Different organizations require distinct communication styles:
+* A financial services firm requires a formal, cautious, conservative tone.
+* An internal engineering documentation bot requires a concise, technical, code-oriented tone.
+
+`ChatbotConfig` enables per-tenant customization of:
+* **Tone**: `professional`, `technical`, `friendly`, or `concise`.
+* **System Prompt**: Custom directives injected into Gemini's instruction block.
+* **Retrieval Hyperparameters**: Default `top_k_chunks` and `max_graph_hops` tuned to the tenant's data density.
+
+---
+
+## 10. Pillar 9: Web Page Ingestion & SSRF Protection (US-2.2)
+
+### The Threat: Server-Side Request Forgery (SSRF)
+When a platform allows users to input arbitrary URLs for the server to crawl, attackers often exploit this to probe internal infrastructure:
+* Attempting `http://localhost:8000/docs` (attacking local backend).
+* Attempting `http://127.0.0.1:7687` (attacking local Neo4j Bolt port).
+* Attempting `http://169.254.169.254/latest/meta-data` (stealing AWS IAM role credentials).
+* Attempting `http://192.168.1.1` (scanning local intranet routers).
+
+### Our Multi-Layered SSRF Defense
+In `app/services/crawler.py`, we implemented strict validation:
+1. **Protocol Check**: Only `http` and `https` are accepted (blocking `file://`, `gopher://`, `ftp://`).
+2. **DNS Resolution & IP Classification**:
+   * The hostname is resolved to physical IP addresses via `socket.getaddrinfo`.
+   * Each resolved IP is validated against `ipaddress.ip_address`:
+     - `ip.is_private` (blocks `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`)
+     - `ip.is_loopback` (blocks `127.0.0.1`, `::1`)
+     - `ip.is_link_local` (blocks `169.254.0.0/16`)
+     - `ip.is_reserved`, `ip.is_multicast`, `ip.is_unspecified`
+   * Any restricted address immediately aborts with `HTTP 400 Bad Request` before any HTTP connection can be established!
+
+---
+
+## 11. Summary Table of Architectural Decisions & Tradeoffs
 
 | Component | Choice Made | Alternatives Considered | Why We Chose It |
 | :--- | :--- | :--- | :--- |
@@ -384,3 +433,5 @@ To prevent the LLM from hallucinating answers when information is missing:
 | **Graph DB** | Neo4j Community 5.26 (Docker) | Amazon Neptune, AWS Memgraph, NetworkX | Native Cypher query language, industry standard, visual Web UI. |
 | **Entity Extraction** | Gemini 2.5 Flash (Structured JSON) | Spacy NER, Stanford NLP, Regex only | Discovers arbitrary custom entity and relationship types without pre-training. |
 | **Graph Multi-Tenancy**| `tenant_id` stamping on Nodes & Edges | Neo4j Enterprise Multi-Database | Supported in free Neo4j Community edition; 100% strict data boundary. |
+| **Chat Memory** | Relational `Conversation` & `ChatMessage` | In-memory Redis store | Durable session logs, verifiable historical citations, ACID integrity. |
+| **Web Ingestion** | Async `httpx` + SSRF IP Filter | Selenium / Playwright headless browsers | Lightweight, fast text extraction, zero browser binary overhead. |
