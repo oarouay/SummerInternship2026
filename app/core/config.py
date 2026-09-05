@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     DEFAULT_CHUNK_SIZE: int = 1000  # Characters (~250 tokens)
     DEFAULT_CHUNK_OVERLAP: int = 200  # Characters (~50 tokens)
 
+    # Google Gemini & Vector Settings
+    GEMINI_API_KEY: Optional[str] = None
+    EMBEDDING_MODEL: str = "text-embedding-004"
+    EMBEDDING_DIMENSIONS: int = 768
+    DEFAULT_SEARCH_TOP_K: int = 5
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

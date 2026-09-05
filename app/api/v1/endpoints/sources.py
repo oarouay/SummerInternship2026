@@ -11,8 +11,11 @@ from app.models.source import Source, SourceStatus, SourceType
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.schemas.chunk import DocumentChunkResponse
+from app.schemas.search import SearchQuery, SearchResult
 from app.schemas.source import RawTextCreate, SourceResponse
+from app.services.embedding import get_embedding_service
 from app.services.pipeline import process_source_pipeline
+from app.services.search import search_similar_chunks
 from app.services.storage import delete_tenant_file, save_tenant_file
 
 router = APIRouter(prefix="/sources", tags=["Data Sources & Document Ingestion"])
@@ -225,3 +228,31 @@ async def delete_source(
     await db.delete(source)
     await db.flush()
     return None
+
+
+@router.post(
+    "/search",
+    response_model=List[SearchResult],
+    summary="Semantic vector search across tenant document chunks"
+)
+async def semantic_search(
+    payload: SearchQuery,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Search document chunks within the caller's tenant using Google Gemini vector embeddings and Cosine Distance.
+    """
+    embedding_service = get_embedding_service()
+    query_vector = await embedding_service.embed_query(payload.query)
+
+    results = await search_similar_chunks(
+        db=db,
+        tenant_id=tenant.id,
+        query_vector=query_vector,
+        top_k=payload.top_k,
+        source_id=payload.source_id
+    )
+    return results
+

@@ -47,18 +47,22 @@ A modular, production-ready foundation for FastAPI featuring JWT Authentication,
 │   │   ├── user.py                  # User schemas
 │   │   ├── source.py                # Source & raw-text schemas
 │   │   ├── chunk.py                 # DocumentChunk schemas
+│   │   ├── search.py                # Semantic Search schemas
 │   │   └── item.py                  # Resource schemas
 │   ├── services/
 │   │   ├── storage.py               # Tenant-isolated file storage & streaming
 │   │   ├── parser.py                # Strategy parser (PDF, DOCX, TXT/MD/CSV)
 │   │   ├── chunking.py              # RecursiveTextSplitter with sliding overlap
+│   │   ├── embedding.py             # Google Gemini text-embedding-004 & mock
+│   │   ├── search.py                # pgvector Cosine Distance search service
 │   │   └── pipeline.py              # Async BackgroundTasks ingestion worker
 │   └── main.py                      # Application entrypoint & lifespan
 ├── tests/
 │   ├── conftest.py                  # Pytest async fixtures & memory DB
 │   ├── test_auth_and_tenant.py      # Auth & Tenant isolation test suite
 │   ├── test_sources.py              # Data sources & upload isolation tests
-│   └── test_pipeline.py             # Parsing, chunking & background pipeline tests
+│   ├── test_pipeline.py             # Parsing, chunking & background pipeline tests
+│   └── test_embeddings_and_search.py # Vector embeddings & semantic search tests
 ├── .env.example                     # Environment template
 ├── .env                             # Local environment configuration
 ├── requirements.txt                 # Dependencies
@@ -140,8 +144,12 @@ Tenants can upload knowledge sources to build their GraphRAG index:
 * **List Sources**: `GET /api/v1/sources/` (strictly scoped to calling tenant).
 * **Get Source Detail**: `GET /api/v1/sources/{source_id}` (includes status: `pending`, `processing`, `indexed`, `failed`).
 * **Inspect Chunks**: `GET /api/v1/sources/{source_id}/chunks` (view semantic passages with estimated token counts).
-* **Reprocess Source**: `POST /api/v1/sources/{source_id}/reprocess` (re-runs parsing & chunking).
-* **Delete Source**: `DELETE /api/v1/sources/{source_id}` (cascades: deletes DB record, chunks, and physical file).
+* **Semantic Vector Search**: `POST /api/v1/sources/search` (`{"query": "...", "top_k": 5}`)
+  * Converts the query into a 768-dimensional vector using Google Gemini.
+  * Finds the closest matching document chunks using **Cosine Distance (`<=>`)**.
+  * Strictly filters by `tenant_id`, guaranteeing zero cross-tenant data leakage.
+* **Reprocess Source**: `POST /api/v1/sources/{source_id}/reprocess` (re-runs parsing, chunking & embedding).
+* **Delete Source**: `DELETE /api/v1/sources/{source_id}` (cascades: deletes DB record, chunks, vectors, and physical file).
 
 ### 🧩 Document Parsing & Recursive Chunking Architecture
 * **Parsers** (`app/services/parser.py`):
@@ -152,6 +160,12 @@ Tenants can upload knowledge sources to build their GraphRAG index:
   * Hierarchical separators: `["\n\n", "\n", ". ", "? ", "! ", " ", ""]`.
   * Configurable `chunk_size` (default: 1,000 characters / ~250 tokens).
   * Sliding-window `chunk_overlap` (default: 200 characters / ~50 tokens).
+
+### ⚡ Vector Storage (`pgvector`) & Google Gemini Embeddings
+* **Model**: Google Gemini `text-embedding-004` producing **768-dimensional unit-normalized vectors**.
+* **Vector Store**: `pgvector` extension inside PostgreSQL directly on `document_chunks.embedding`.
+* **Distance Metric**: **Cosine Distance (`<=>`)**, ranking chunks where `score = 1.0 - distance`.
+* **Testing & Offline Support**: Built-in deterministic mock embedding service for zero-cost testing and offline development.
 
 ---
 

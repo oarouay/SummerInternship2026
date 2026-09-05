@@ -1,6 +1,8 @@
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import ForeignKey, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from app.core.config import settings
 from app.core.database import Base
 from app.models.base import TenantMixin
 
@@ -25,6 +27,12 @@ class DocumentChunk(Base, TenantMixin):
     char_count: Mapped[int] = mapped_column(Integer, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     metadata_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # 768-dimensional vector embedding for Google Gemini text-embedding-004
+    embedding: Mapped[Optional[List[float]]] = mapped_column(
+        Vector(settings.EMBEDDING_DIMENSIONS),
+        nullable=True
+    )
 
     # Relationships
     source: Mapped["Source"] = relationship("Source", back_populates="chunks")

@@ -1,10 +1,12 @@
 import json
 import logging
 from sqlalchemy import delete, select
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.chunk import DocumentChunk
 from app.models.source import Source, SourceStatus, SourceType
 from app.services.chunking import RecursiveTextSplitter
+from app.services.embedding import get_embedding_service
 from app.services.parser import parse_document
 
 logger = logging.getLogger(__name__)
@@ -54,32 +56,41 @@ async def process_source_pipeline(source_id: int) -> None:
             if not chunks_data:
                 raise ValueError("Splitting document produced no text chunks.")
 
-            # 5. Clear old chunks if re-processing
+            # 5. Generate Vector Embeddings (Google Gemini text-embedding-004)
+            embedding_service = get_embedding_service()
+            chunk_texts = [meta["content"] for meta in chunks_data]
+            embeddings = await embedding_service.embed_documents(chunk_texts)
+
+            # 6. Clear old chunks if re-processing
             await db.execute(delete(DocumentChunk).where(DocumentChunk.source_id == source.id))
 
-            # 6. Insert new DocumentChunks
+            # 7. Insert new DocumentChunks with vectors
             total_tokens = 0
-            for meta in chunks_data:
+            for idx, meta in enumerate(chunks_data):
                 total_tokens += meta["token_count"]
+                emb = embeddings[idx] if idx < len(embeddings) else None
                 chunk_record = DocumentChunk(
                     source_id=source.id,
                     chunk_index=meta["chunk_index"],
                     content=meta["content"],
                     char_count=meta["char_count"],
                     token_count=meta["token_count"],
-                    tenant_id=source.tenant_id
+                    tenant_id=source.tenant_id,
+                    embedding=emb
                 )
                 db.add(chunk_record)
 
-            # 7. Update status to INDEXED
+            # 8. Update status to INDEXED
             source.status = SourceStatus.INDEXED.value
             source.metadata_json = json.dumps({
                 "chunk_count": len(chunks_data),
                 "total_chars": len(clean_text),
-                "total_tokens": total_tokens
+                "total_tokens": total_tokens,
+                "embedding_model": settings.EMBEDDING_MODEL,
+                "embedding_dimensions": settings.EMBEDDING_DIMENSIONS
             })
             await db.commit()
-            logger.info(f"[Pipeline] Successfully indexed source {source.id} with {len(chunks_data)} chunks.")
+            logger.info(f"[Pipeline] Successfully indexed source {source.id} with {len(chunks_data)} embedded chunks.")
 
         except Exception as e:
             logger.exception(f"[Pipeline] Processing failed for source {source_id}: {str(e)}")
