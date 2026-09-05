@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_BYTES: int = 26_214_400  # 25 MB
     ALLOWED_EXTENSIONS: List[str] = [".pdf", ".docx", ".txt", ".csv", ".md"]
 
+    # Text Chunking Settings
+    DEFAULT_CHUNK_SIZE: int = 1000  # Characters (~250 tokens)
+    DEFAULT_CHUNK_OVERLAP: int = 200  # Characters (~50 tokens)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

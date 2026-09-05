@@ -24,7 +24,7 @@ A modular, production-ready foundation for FastAPI featuring JWT Authentication,
 │   │       ├── endpoints/
 │   │       │   ├── auth.py          # /register-tenant, /login, /me
 │   │       │   ├── tenants.py       # /current, /users
-│   │       │   ├── sources.py       # /sources (upload, raw-text, list, delete)
+│   │       │   ├── sources.py       # /sources (upload, raw-text, chunks, reprocess)
 │   │       │   └── items.py         # Sample tenant-isolated resource
 │   │       └── router.py            # Aggregated v1 endpoints
 │   ├── core/
@@ -39,20 +39,26 @@ A modular, production-ready foundation for FastAPI featuring JWT Authentication,
 │   │   ├── tenant.py                # Tenant model
 │   │   ├── user.py                  # User model
 │   │   ├── source.py                # Knowledge Source model
+│   │   ├── chunk.py                 # DocumentChunk model (tenant-isolated)
 │   │   └── item.py                  # Example tenant-isolated model
 │   ├── schemas/
 │   │   ├── auth.py                  # Token & Login schemas
 │   │   ├── tenant.py                # Tenant schemas
 │   │   ├── user.py                  # User schemas
 │   │   ├── source.py                # Source & raw-text schemas
+│   │   ├── chunk.py                 # DocumentChunk schemas
 │   │   └── item.py                  # Resource schemas
 │   ├── services/
-│   │   └── storage.py               # Tenant-isolated file storage & streaming
+│   │   ├── storage.py               # Tenant-isolated file storage & streaming
+│   │   ├── parser.py                # Strategy parser (PDF, DOCX, TXT/MD/CSV)
+│   │   ├── chunking.py              # RecursiveTextSplitter with sliding overlap
+│   │   └── pipeline.py              # Async BackgroundTasks ingestion worker
 │   └── main.py                      # Application entrypoint & lifespan
 ├── tests/
 │   ├── conftest.py                  # Pytest async fixtures & memory DB
 │   ├── test_auth_and_tenant.py      # Auth & Tenant isolation test suite
-│   └── test_sources.py              # Data sources & upload isolation tests
+│   ├── test_sources.py              # Data sources & upload isolation tests
+│   └── test_pipeline.py             # Parsing, chunking & background pipeline tests
 ├── .env.example                     # Environment template
 ├── .env                             # Local environment configuration
 ├── requirements.txt                 # Dependencies
@@ -121,19 +127,31 @@ uvicorn app.main:app --reload --port 8000
 
 ---
 
-## 📂 Data Source Management (Epic 2)
+## 📂 Data Source Management & Ingestion Pipeline (Epic 2)
 
 Tenants can upload knowledge sources to build their GraphRAG index:
 
 * **Upload Document**: `POST /api/v1/sources/upload` (`multipart/form-data` with `.pdf`, `.docx`, `.txt`, `.csv`, `.md`)
   * Validates file size (up to 25MB) and supported extensions.
   * Streams file to tenant-isolated disk storage (`uploads/{tenant_id}/{uuid}_{filename}`).
-  * Registers record in PostgreSQL with initial `PENDING` status.
+  * Automatically enqueues background processing via `BackgroundTasks`.
 * **Ingest Raw Text**: `POST /api/v1/sources/raw-text` (`{"name": "...", "content": "..."}`)
-  * For quick FAQ or policy ingestion without a file.
+  * Directly indexes FAQs, knowledge notes, and policies without requiring a physical file.
 * **List Sources**: `GET /api/v1/sources/` (strictly scoped to calling tenant).
-* **Get Source Detail**: `GET /api/v1/sources/{source_id}`.
-* **Delete Source**: `DELETE /api/v1/sources/{source_id}` (cascades and removes file from disk).
+* **Get Source Detail**: `GET /api/v1/sources/{source_id}` (includes status: `pending`, `processing`, `indexed`, `failed`).
+* **Inspect Chunks**: `GET /api/v1/sources/{source_id}/chunks` (view semantic passages with estimated token counts).
+* **Reprocess Source**: `POST /api/v1/sources/{source_id}/reprocess` (re-runs parsing & chunking).
+* **Delete Source**: `DELETE /api/v1/sources/{source_id}` (cascades: deletes DB record, chunks, and physical file).
+
+### 🧩 Document Parsing & Recursive Chunking Architecture
+* **Parsers** (`app/services/parser.py`):
+  * **PDF**: `pypdf` with empty / scanned document detection (flags image-only PDFs for OCR).
+  * **Word**: `python-docx` extracting paragraphs and Markdown-style tables.
+  * **Text/CSV**: Multi-encoding fallback (`utf-8`, `utf-8-sig`, `latin-1`, `cp1252`).
+* **Recursive Chunker** (`app/services/chunking.py`):
+  * Hierarchical separators: `["\n\n", "\n", ". ", "? ", "! ", " ", ""]`.
+  * Configurable `chunk_size` (default: 1,000 characters / ~250 tokens).
+  * Sliding-window `chunk_overlap` (default: 200 characters / ~50 tokens).
 
 ---
 

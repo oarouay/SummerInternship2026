@@ -3,6 +3,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.item import Item
 from app.models.source import Source, SourceType, SourceStatus
+from app.models.chunk import DocumentChunk
 
 __all__ = [
     "Base",
@@ -14,4 +15,6 @@ __all__ = [
     "Source",
     "SourceType",
     "SourceStatus",
+    "DocumentChunk",
 ]
+

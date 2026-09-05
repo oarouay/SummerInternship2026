@@ -6,10 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.dependencies.auth import get_current_user
 from app.dependencies.tenant import get_current_tenant
+from app.models.chunk import DocumentChunk
 from app.models.source import Source, SourceStatus, SourceType
 from app.models.tenant import Tenant
 from app.models.user import User
+from app.schemas.chunk import DocumentChunkResponse
 from app.schemas.source import RawTextCreate, SourceResponse
+from app.services.pipeline import process_source_pipeline
 from app.services.storage import delete_tenant_file, save_tenant_file
 
 router = APIRouter(prefix="/sources", tags=["Data Sources & Document Ingestion"])
@@ -49,7 +52,7 @@ async def upload_source(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Upload a document into tenant-isolated storage and register it in the ingestion queue.
+    Upload a document into tenant-isolated storage and asynchronously trigger the ingestion pipeline.
     """
     relative_path, file_size, safe_name = await save_tenant_file(tenant.id, file)
 
@@ -66,7 +69,8 @@ async def upload_source(
     db.add(source)
     await db.flush()
 
-    # In future phases: background_tasks.add_task(process_source_pipeline, source.id)
+    # Trigger asynchronous parsing & chunking pipeline
+    background_tasks.add_task(process_source_pipeline, source.id)
     return source
 
 
@@ -78,12 +82,13 @@ async def upload_source(
 )
 async def ingest_raw_text(
     payload: RawTextCreate,
+    background_tasks: BackgroundTasks,
     tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Directly ingest raw text (e.g. FAQs, company policies) without requiring a file upload.
+    Directly ingest raw text (e.g. FAQs, company policies) and asynchronously trigger chunking.
     """
     byte_size = len(payload.content.encode("utf-8"))
     source = Source(
@@ -98,6 +103,9 @@ async def ingest_raw_text(
     )
     db.add(source)
     await db.flush()
+
+    # Trigger asynchronous parsing & chunking pipeline
+    background_tasks.add_task(process_source_pipeline, source.id)
     return source
 
 
@@ -122,6 +130,69 @@ async def get_source(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Source not found within your organization."
         )
+    return source
+
+
+@router.get(
+    "/{source_id}/chunks",
+    response_model=List[DocumentChunkResponse],
+    summary="List all semantic chunks generated from a source"
+)
+async def get_source_chunks(
+    source_id: int,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Retrieve all chunks generated from a source, strictly scoped to current tenant."""
+    # Ensure source exists and belongs to this tenant
+    stmt_src = select(Source).where(Source.id == source_id, Source.tenant_id == tenant.id)
+    res_src = await db.execute(stmt_src)
+    source = res_src.scalar_one_or_none()
+
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source not found within your organization."
+        )
+
+    stmt_chunks = (
+        select(DocumentChunk)
+        .where(DocumentChunk.source_id == source.id, DocumentChunk.tenant_id == tenant.id)
+        .order_by(DocumentChunk.chunk_index.asc())
+    )
+    result = await db.execute(stmt_chunks)
+    return result.scalars().all()
+
+
+@router.post(
+    "/{source_id}/reprocess",
+    response_model=SourceResponse,
+    summary="Re-trigger background ingestion pipeline for a source"
+)
+async def reprocess_source(
+    source_id: int,
+    background_tasks: BackgroundTasks,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Re-index a source by re-running document parsing and chunking."""
+    stmt = select(Source).where(Source.id == source_id, Source.tenant_id == tenant.id)
+    result = await db.execute(stmt)
+    source = result.scalar_one_or_none()
+
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source not found within your organization."
+        )
+
+    source.status = SourceStatus.PENDING.value
+    source.error_message = None
+    await db.flush()
+
+    background_tasks.add_task(process_source_pipeline, source.id)
     return source
 
 
@@ -154,4 +225,3 @@ async def delete_source(
     await db.delete(source)
     await db.flush()
     return None
-

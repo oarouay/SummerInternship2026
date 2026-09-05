@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
@@ -8,6 +8,7 @@ from app.models.base import TenantMixin
 if TYPE_CHECKING:
     from app.models.tenant import Tenant
     from app.models.user import User
+    from app.models.chunk import DocumentChunk
 
 
 class SourceType(str, Enum):
@@ -47,3 +48,5 @@ class Source(Base, TenantMixin):
     # Relationships
     tenant: Mapped["Tenant"] = relationship("Tenant", back_populates="sources")
     owner: Mapped["User"] = relationship("User", back_populates="sources")
+    chunks: Mapped[List["DocumentChunk"]] = relationship("DocumentChunk", back_populates="source", cascade="all, delete-orphan")
+
