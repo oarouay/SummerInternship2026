@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-004"
     EMBEDDING_DIMENSIONS: int = 768
     DEFAULT_SEARCH_TOP_K: int = 5
+    LLM_MODEL: str = "gemini-2.5-flash"
+
+    # Neo4j Graph Database Settings
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = "StrongPassword123!"
+    GRAPH_ENABLED: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

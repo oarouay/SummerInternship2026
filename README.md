@@ -169,9 +169,30 @@ Tenants can upload knowledge sources to build their GraphRAG index:
 
 ---
 
+## 🕸️ Knowledge Graph Construction with Neo4j (Epic 3)
+
+The platform pairs vector search with an explicit **Knowledge Graph** stored in **Neo4j 5.26**:
+
+* **Docker Infrastructure**: Neo4j Community running on port `7474` (Web Browser UI) and `7687` (Async Bolt Protocol).
+* **LLM Extraction**: `GeminiGraphExtractor` automatically extracts canonical entities and typed relationships (`MANAGES`, `DEPENDS_ON`, `USES`) from document chunks using `gemini-2.5-flash` with structured JSON output.
+* **Graph Multi-Tenancy**: Guaranteed via composite unique constraints `(e.tenant_id, e.name)` and tenant-stamped relationships.
+* **Neighborhood Traversal**: `POST /api/v1/graph/neighborhood` queries multi-hop connections up to $N$ hops away for seed entities.
+* **Tenant Graph Stats**: `GET /api/v1/graph/stats` returns total entity and relationship counts.
+
+---
+
+## 📚 In-Depth Learning Guide
+
+For a comprehensive educational breakdown of the architecture, trade-offs, vector mathematics, and Cypher graph traversals, read:
+👉 **[Comprehensive Architecture & Learning Guide](file:///c:/Users/USER/Desktop/Oussama/stage%20d%27ete%20premier/docs/LEARNING_GUIDE.md)**
+
+---
+
 ## 🧪 Running Tests
 
+The test suite runs 28 async unit and integration tests across the entire platform:
+
 ```bash
-pytest
+.\venv\Scripts\python.exe -m pytest tests/
 ```
 

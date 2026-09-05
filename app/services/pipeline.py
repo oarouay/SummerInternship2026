@@ -7,6 +7,8 @@ from app.models.chunk import DocumentChunk
 from app.models.source import Source, SourceStatus, SourceType
 from app.services.chunking import RecursiveTextSplitter
 from app.services.embedding import get_embedding_service
+from app.services.extractor import get_graph_extractor
+from app.services.graph import get_graph_store
 from app.services.parser import parse_document
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,7 @@ async def process_source_pipeline(source_id: int) -> None:
 
             # 7. Insert new DocumentChunks with vectors
             total_tokens = 0
+            created_chunk_records = []
             for idx, meta in enumerate(chunks_data):
                 total_tokens += meta["token_count"]
                 emb = embeddings[idx] if idx < len(embeddings) else None
@@ -79,18 +82,49 @@ async def process_source_pipeline(source_id: int) -> None:
                     embedding=emb
                 )
                 db.add(chunk_record)
+                created_chunk_records.append(chunk_record)
 
-            # 8. Update status to INDEXED
+            await db.flush()
+
+            # 8. Knowledge Graph Construction (Entity & Relationship Extraction)
+            total_entities = 0
+            total_relationships = 0
+            if settings.GRAPH_ENABLED:
+                graph_store = await get_graph_store()
+                graph_extractor = get_graph_extractor()
+
+                # Clean any previous graph data for this source
+                await graph_store.delete_tenant_source_graph(
+                    tenant_id=source.tenant_id, source_id=source.id
+                )
+
+                for chunk_rec in created_chunk_records:
+                    graph_res = await graph_extractor.extract_graph(chunk_rec.content)
+                    total_entities += len(graph_res.entities)
+                    total_relationships += len(graph_res.relationships)
+                    await graph_store.insert_graph(
+                        tenant_id=source.tenant_id,
+                        source_id=source.id,
+                        chunk_id=chunk_rec.id,
+                        graph=graph_res,
+                    )
+
+            # 9. Update status to INDEXED
             source.status = SourceStatus.INDEXED.value
             source.metadata_json = json.dumps({
                 "chunk_count": len(chunks_data),
                 "total_chars": len(clean_text),
                 "total_tokens": total_tokens,
                 "embedding_model": settings.EMBEDDING_MODEL,
-                "embedding_dimensions": settings.EMBEDDING_DIMENSIONS
+                "embedding_dimensions": settings.EMBEDDING_DIMENSIONS,
+                "graph_entities": total_entities,
+                "graph_relationships": total_relationships,
             })
             await db.commit()
-            logger.info(f"[Pipeline] Successfully indexed source {source.id} with {len(chunks_data)} embedded chunks.")
+            logger.info(
+                f"[Pipeline] Successfully indexed source {source.id} with {len(chunks_data)} chunks, "
+                f"{total_entities} graph entities, and {total_relationships} relationships."
+            )
 
         except Exception as e:
             logger.exception(f"[Pipeline] Processing failed for source {source_id}: {str(e)}")

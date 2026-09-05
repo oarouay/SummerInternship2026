@@ -1,0 +1,16 @@
+services:
+  neo4j:
+    image: neo4j:5.26
+    container_name: graphrag-neo4j
+    ports:
+      - "7474:7474" # HTTP Web Browser UI
+      - "7687:7687" # Bolt protocol
+    environment:
+      - NEO4J_AUTH=neo4j/StrongPassword123!
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
