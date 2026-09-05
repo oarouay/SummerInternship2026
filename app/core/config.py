@@ -47,6 +47,11 @@ class Settings(BaseSettings):
             return v
         return []
 
+    # Storage & Document Ingestion
+    UPLOAD_DIR: str = "uploads"
+    MAX_UPLOAD_SIZE_BYTES: int = 26_214_400  # 25 MB
+    ALLOWED_EXTENSIONS: List[str] = [".pdf", ".docx", ".txt", ".csv", ".md"]
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

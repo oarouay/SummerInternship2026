@@ -7,6 +7,7 @@ from app.models.base import TimestampMixin
 if TYPE_CHECKING:
     from app.models.user import User
     from app.models.item import Item
+    from app.models.source import Source
 
 
 class Tenant(Base, TimestampMixin):
@@ -21,3 +22,4 @@ class Tenant(Base, TimestampMixin):
     # Relationships
     users: Mapped[List["User"]] = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
     items: Mapped[List["Item"]] = relationship("Item", back_populates="tenant", cascade="all, delete-orphan")
+    sources: Mapped[List["Source"]] = relationship("Source", back_populates="tenant", cascade="all, delete-orphan")

@@ -24,6 +24,7 @@ A modular, production-ready foundation for FastAPI featuring JWT Authentication,
 │   │       ├── endpoints/
 │   │       │   ├── auth.py          # /register-tenant, /login, /me
 │   │       │   ├── tenants.py       # /current, /users
+│   │       │   ├── sources.py       # /sources (upload, raw-text, list, delete)
 │   │       │   └── items.py         # Sample tenant-isolated resource
 │   │       └── router.py            # Aggregated v1 endpoints
 │   ├── core/
@@ -37,16 +38,21 @@ A modular, production-ready foundation for FastAPI featuring JWT Authentication,
 │   │   ├── base.py                  # Base model & TenantMixin
 │   │   ├── tenant.py                # Tenant model
 │   │   ├── user.py                  # User model
+│   │   ├── source.py                # Knowledge Source model
 │   │   └── item.py                  # Example tenant-isolated model
 │   ├── schemas/
 │   │   ├── auth.py                  # Token & Login schemas
 │   │   ├── tenant.py                # Tenant schemas
 │   │   ├── user.py                  # User schemas
+│   │   ├── source.py                # Source & raw-text schemas
 │   │   └── item.py                  # Resource schemas
+│   ├── services/
+│   │   └── storage.py               # Tenant-isolated file storage & streaming
 │   └── main.py                      # Application entrypoint & lifespan
 ├── tests/
 │   ├── conftest.py                  # Pytest async fixtures & memory DB
-│   └── test_auth_and_tenant.py      # Auth & Tenant isolation test suite
+│   ├── test_auth_and_tenant.py      # Auth & Tenant isolation test suite
+│   └── test_sources.py              # Data sources & upload isolation tests
 ├── .env.example                     # Environment template
 ├── .env                             # Local environment configuration
 ├── requirements.txt                 # Dependencies
@@ -115,8 +121,25 @@ uvicorn app.main:app --reload --port 8000
 
 ---
 
+## 📂 Data Source Management (Epic 2)
+
+Tenants can upload knowledge sources to build their GraphRAG index:
+
+* **Upload Document**: `POST /api/v1/sources/upload` (`multipart/form-data` with `.pdf`, `.docx`, `.txt`, `.csv`, `.md`)
+  * Validates file size (up to 25MB) and supported extensions.
+  * Streams file to tenant-isolated disk storage (`uploads/{tenant_id}/{uuid}_{filename}`).
+  * Registers record in PostgreSQL with initial `PENDING` status.
+* **Ingest Raw Text**: `POST /api/v1/sources/raw-text` (`{"name": "...", "content": "..."}`)
+  * For quick FAQ or policy ingestion without a file.
+* **List Sources**: `GET /api/v1/sources/` (strictly scoped to calling tenant).
+* **Get Source Detail**: `GET /api/v1/sources/{source_id}`.
+* **Delete Source**: `DELETE /api/v1/sources/{source_id}` (cascades and removes file from disk).
+
+---
+
 ## 🧪 Running Tests
 
 ```bash
 pytest
 ```
+
