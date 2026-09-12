@@ -17,7 +17,9 @@ sql_app.db
 
 # Environment variables
 .env
+.env.*
 .env.local
+!.env.example
 
 # Testing & Coverage
 .pytest_cache/
@@ -27,6 +29,8 @@ htmlcov/
 
 # IDE & OS
 .vscode/
+.agent/
+.agents/
 .idea/
 *.swp
 *.swo
