@@ -14,6 +14,12 @@ class ChatbotConfigRead(BaseModel):
     default_top_k: int = Field(description="Default number of vector chunks to retrieve")
     default_max_hops: int = Field(description="Default graph traversal depth")
     temperature: float = Field(description="LLM generation temperature")
+    
+    # Gemini API Key Status
+    has_custom_api_key: bool = Field(default=False, description="Whether tenant has a custom Gemini API key configured")
+    gemini_api_key_preview: Optional[str] = Field(None, description="Masked preview of tenant custom key (e.g. ••••••••X8bQ)")
+    system_api_key_configured: bool = Field(default=False, description="Whether global GEMINI_API_KEY is configured in .env")
+
     created_at: datetime
     updated_at: datetime
 
@@ -29,3 +35,14 @@ class ChatbotConfigUpdate(BaseModel):
     default_top_k: Optional[int] = Field(None, ge=1, le=20)
     default_max_hops: Optional[int] = Field(None, ge=1, le=3)
     temperature: Optional[float] = Field(None, ge=0.0, le=1.0)
+    gemini_api_key: Optional[str] = Field(None, max_length=255, description="Tenant-specific Gemini API Key. Send empty string '' to clear and revert to system key.")
+
+
+class GeminiKeyValidationRequest(BaseModel):
+    api_key: Optional[str] = Field(None, description="Gemini API Key to test (if omitted, tests active tenant key or system key)")
+
+
+class GeminiKeyValidationResponse(BaseModel):
+    valid: bool
+    model: str = "gemini-3.8-flash"
+    message: str

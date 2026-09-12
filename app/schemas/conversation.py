@@ -62,3 +62,9 @@ class ConversationRead(BaseModel):
     messages: List[ChatMessageRead] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PublicChatMessageRequest(BaseModel):
+    message: str = Field(..., min_length=1, description="Visitor question")
+    history: Optional[List[Dict[str, str]]] = Field(default_factory=list, description="Prior conversation turns")
+

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Client Host Website - Embeddable Widget Demo</title>
+  <style>
+    /* Intentionally aggressive styles to demonstrate Shadow DOM immunity */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: Georgia, serif;
+      background: #F1F5F9;
+      color: #0F172A;
+      line-height: 1.6;
+    }
+    /* Host website has aggressive button styles that would normally break widget buttons */
+    button {
+      background: #DC2626 !important;
+      color: #FF00FF !important;
+      border-radius: 0 !important;
+      font-family: 'Courier New', monospace !important;
+    }
+    .hero {
+      background: #FFFFFF;
+      border-bottom: 1px solid #E2E8F0;
+      padding: 60px 40px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: 36px;
+      color: #1E293B;
+      margin-bottom: 12px;
+    }
+    .badge {
+      display: inline-block;
+      background: #E0E7FF;
+      color: #4338CA;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+    .container {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+    .card {
+      background: #FFFFFF;
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      margin-bottom: 24px;
+    }
+    .card h2 {
+      font-size: 20px;
+      margin-bottom: 10px;
+      color: #0F172A;
+    }
+    code {
+      background: #F1F5F9;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="hero">
+    <span class="badge">Third-Party Host Environment</span>
+    <h1>Acme Global Client Portal</h1>
+    <p>This page simulates an external third-party website embedding the OmniGraph GraphRAG Chatbot Widget.</p>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>🛡️ Shadow DOM Isolation Proof</h2>
+      <p>
+        Notice this host webpage defines aggressive global CSS overrides:
+        <code>button { background: red !important; font-family: Courier !important; }</code>.
+      </p>
+      <p style="margin-top: 10px;">
+        Look at the floating chat bubble in the bottom right corner. Thanks to <strong>Shadow DOM encapsulation</strong>, 
+        the chatbot launcher and modal retain their custom typography, obsidian theme, and styling without any CSS leakage!
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>How it was embedded:</h2>
+      <pre style="background: #1E293B; color: #38BDF8; padding: 16px; border-radius: 8px; overflow-x: auto; font-family: monospace; font-size: 13px;">
+&lt;!-- OmniGraph GraphRAG Widget --&gt;
+&lt;script 
+  src="/widget.js" 
+  data-tenant-slug="default" 
+  data-primary-color="#8B5CF6"
+  data-position="right"
+  defer&gt;
+&lt;/script&gt;</pre>
+    </div>
+  </div>
+
+  <!-- EMBEDDED OMNIGRAPH WIDGET -->
+  <script 
+    src="/widget.js" 
+    data-tenant-slug="default" 
+    data-primary-color="#8B5CF6"
+    data-position="right"
+    defer>
+  </script>
+
+</body>
+</html>

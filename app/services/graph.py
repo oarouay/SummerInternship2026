@@ -131,10 +131,13 @@ class InMemoryGraphStore(BaseGraphStore):
         visited_edges: Set[Tuple[str, str, str]] = set()
 
         # Seed BFS queue: (node_name, current_hop)
-        queue = deque([(name, 0) for name in entity_names if name in t_nodes])
+        if not entity_names:
+            queue = deque([(name, 0) for name in list(t_nodes.keys())[:limit]])
+        else:
+            queue = deque([(name, 0) for name in entity_names if name in t_nodes])
         visited_nodes: Set[str] = {name for name, _ in queue}
 
-        while queue and len(matched_edges) < limit:
+        while queue and (len(matched_edges) < limit or len(matched_nodes) < limit):
             current_name, hop = queue.popleft()
             node_data = t_nodes[current_name]
             matched_nodes[current_name] = GraphNode(
@@ -315,9 +318,10 @@ class Neo4jGraphStore(BaseGraphStore):
         self, tenant_id: int, entity_names: List[str], max_hops: int = 1, limit: int = 25
     ) -> GraphNeighborhoodResponse:
         await self.initialize()
+        where_clause = "WHERE start.name IN $entity_names" if entity_names else ""
         cypher = f"""
         MATCH (start:Entity {{tenant_id: $tenant_id}})
-        WHERE start.name IN $entity_names
+        {where_clause}
         OPTIONAL MATCH path = (start)-[r:RELATION*1..{max_hops}]-(connected:Entity {{tenant_id: $tenant_id}})
         RETURN start, path
         LIMIT $limit

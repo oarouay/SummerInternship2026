@@ -21,9 +21,9 @@ class GraphExtractionResult(BaseModel):
 
 
 class GraphNeighborhoodQuery(BaseModel):
-    entity_names: List[str] = Field(..., min_length=1, description="Seed entity names to start graph traversal from")
+    entity_names: List[str] = Field(default_factory=list, description="Seed entity names to start graph traversal from (or empty to explore active tenant cluster)")
     max_hops: int = Field(default=1, ge=1, le=3, description="Number of graph hops to explore (1-3)")
-    limit: int = Field(default=25, ge=1, le=100, description="Maximum number of connections to return")
+    limit: int = Field(default=50, ge=1, le=100, description="Maximum number of connections to return")
 
 
 class GraphNode(BaseModel):

@@ -75,7 +75,7 @@ class GeminiEmbeddingService(BaseEmbeddingService):
     Google Gemini Embedding Service utilizing text-embedding-004 (768 dimensions).
     """
 
-    def __init__(self, api_key: str, model: str = "text-embedding-004", dimensions: int = 768):
+    def __init__(self, api_key: str, model: str = "gemini-embedding-001", dimensions: int = 768):
         from google import genai
         from google.genai import types
 
@@ -116,20 +116,21 @@ class GeminiEmbeddingService(BaseEmbeddingService):
         raise ValueError("Gemini API returned unexpected batch embedding structure.")
 
 
-def get_embedding_service() -> BaseEmbeddingService:
+def get_embedding_service(api_key: Optional[str] = None) -> BaseEmbeddingService:
     """
-    Factory that returns GeminiEmbeddingService if GEMINI_API_KEY is present,
-    otherwise falls back to MockEmbeddingService.
+    Factory that returns GeminiEmbeddingService if a valid API key is provided
+    (or if GEMINI_API_KEY is present in settings), otherwise falls back to MockEmbeddingService.
     """
-    if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+    effective_key = (api_key and api_key.strip()) or (settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
+    if effective_key:
         try:
             return GeminiEmbeddingService(
-                api_key=settings.GEMINI_API_KEY,
+                api_key=effective_key,
                 model=settings.EMBEDDING_MODEL,
                 dimensions=settings.EMBEDDING_DIMENSIONS
             )
         except Exception as e:
             logger.warning(f"Failed to initialize GeminiEmbeddingService ({e}). Falling back to MockEmbeddingService.")
             return MockEmbeddingService(dimensions=settings.EMBEDDING_DIMENSIONS)
-    
+
     return MockEmbeddingService(dimensions=settings.EMBEDDING_DIMENSIONS)

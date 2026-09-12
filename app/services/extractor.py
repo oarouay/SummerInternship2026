@@ -82,7 +82,7 @@ class GeminiGraphExtractor(BaseGraphExtractor):
     Google Gemini Knowledge Graph Extractor using structured JSON schema.
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3.8-flash"):
         from google import genai
         from google.genai import types
 
@@ -124,15 +124,16 @@ class GeminiGraphExtractor(BaseGraphExtractor):
             return await MockGraphExtractor().extract_graph(text)
 
 
-def get_graph_extractor() -> BaseGraphExtractor:
+def get_graph_extractor(api_key: Optional[str] = None) -> BaseGraphExtractor:
     """
-    Factory that returns GeminiGraphExtractor if GEMINI_API_KEY is configured,
-    otherwise returns MockGraphExtractor.
+    Factory that returns GeminiGraphExtractor if a valid API key is provided
+    (or if GEMINI_API_KEY is configured in settings), otherwise returns MockGraphExtractor.
     """
-    if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+    effective_key = (api_key and api_key.strip()) or (settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
+    if effective_key:
         try:
             return GeminiGraphExtractor(
-                api_key=settings.GEMINI_API_KEY,
+                api_key=effective_key,
                 model=settings.LLM_MODEL
             )
         except Exception as e:

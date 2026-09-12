@@ -31,3 +31,6 @@ class ChatbotConfig(Base, TenantMixin, TimestampMixin):
     default_top_k: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
     default_max_hops: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
     temperature: Mapped[float] = mapped_column(Float, default=0.2, nullable=False)
+
+    # Optional tenant-specific Gemini API Key override
+    gemini_api_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

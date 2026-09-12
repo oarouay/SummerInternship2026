@@ -50,4 +50,14 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 async def init_db() -> None:
     """Initialize database tables (useful for development and test setups)."""
     async with engine.begin() as conn:
+        from sqlalchemy import text
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+        except Exception:
+            # Silently pass on SQLite or environments where extension is already active or unneeded
+            pass
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            await conn.execute(text("ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS gemini_api_key VARCHAR(255);"))
+        except Exception:
+            pass

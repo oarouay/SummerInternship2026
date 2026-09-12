@@ -1,8 +1,10 @@
+import asyncio
 import json
 import logging
 from sqlalchemy import delete, select
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
+from app.models.chatbot import ChatbotConfig
 from app.models.chunk import DocumentChunk
 from app.models.source import Source, SourceStatus, SourceType
 from app.services.chunking import RecursiveTextSplitter
@@ -21,14 +23,25 @@ async def process_source_pipeline(source_id: int) -> None:
     """
     async with AsyncSessionLocal() as db:
         try:
-            # 1. Fetch Source
-            stmt = select(Source).where(Source.id == source_id)
-            result = await db.execute(stmt)
-            source = result.scalar_one_or_none()
+            # 1. Fetch Source with retry to guarantee read-after-write consistency
+            source = None
+            for _ in range(5):
+                stmt = select(Source).where(Source.id == source_id)
+                result = await db.execute(stmt)
+                source = result.scalar_one_or_none()
+                if source:
+                    break
+                await asyncio.sleep(0.15)
 
             if not source:
                 logger.error(f"[Pipeline] Source {source_id} not found.")
                 return
+
+            # Check tenant ChatbotConfig for custom gemini_api_key override
+            cfg_stmt = select(ChatbotConfig).where(ChatbotConfig.tenant_id == source.tenant_id)
+            cfg_res = await db.execute(cfg_stmt)
+            chatbot_cfg = cfg_res.scalar_one_or_none()
+            tenant_gemini_key = chatbot_cfg.gemini_api_key if chatbot_cfg else None
 
             # 2. Update status to PROCESSING
             source.status = SourceStatus.PROCESSING.value
@@ -59,7 +72,7 @@ async def process_source_pipeline(source_id: int) -> None:
                 raise ValueError("Splitting document produced no text chunks.")
 
             # 5. Generate Vector Embeddings (Google Gemini text-embedding-004)
-            embedding_service = get_embedding_service()
+            embedding_service = get_embedding_service(api_key=tenant_gemini_key)
             chunk_texts = [meta["content"] for meta in chunks_data]
             embeddings = await embedding_service.embed_documents(chunk_texts)
 
@@ -91,7 +104,7 @@ async def process_source_pipeline(source_id: int) -> None:
             total_relationships = 0
             if settings.GRAPH_ENABLED:
                 graph_store = await get_graph_store()
-                graph_extractor = get_graph_extractor()
+                graph_extractor = get_graph_extractor(api_key=tenant_gemini_key)
 
                 # Clean any previous graph data for this source
                 await graph_store.delete_tenant_source_graph(

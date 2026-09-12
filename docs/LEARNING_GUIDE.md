@@ -435,3 +435,101 @@ In `app/services/crawler.py`, we implemented strict validation:
 | **Graph Multi-Tenancy**| `tenant_id` stamping on Nodes & Edges | Neo4j Enterprise Multi-Database | Supported in free Neo4j Community edition; 100% strict data boundary. |
 | **Chat Memory** | Relational `Conversation` & `ChatMessage` | In-memory Redis store | Durable session logs, verifiable historical citations, ACID integrity. |
 | **Web Ingestion** | Async `httpx` + SSRF IP Filter | Selenium / Playwright headless browsers | Lightweight, fast text extraction, zero browser binary overhead. |
+| **Frontend Framework** | React 19 + Vite 8 SPA | Next.js, Remix, Vanilla HTML/JS | Behind-auth dashboard requires no SSR/SEO; instant HMR; zero second Node server needed. |
+| **Widget Isolation** | Pure Shadow DOM (`attachShadow`) | Standard `<iframe>`, Global script injection | 100% immune to host CSS/Tailwind collisions; full responsive freedom without iframe resize glitches. |
+| **Graph Visualizer** | `vis-network` (ForceAtlas2 physics) | D3.js, Cytoscape.js, Three.js 3D | Built-in spring physics simulation; smooth zoom/pan; rich node click events. |
+
+---
+
+## 12. Pillar 10: React + Vite Frontend Architecture vs Next.js
+
+### Why React + Vite Over Next.js for Enterprise Dashboards
+When architecting the frontend for the GraphRAG platform, we evaluated whether to use **Next.js (App Router)** or a modern **React + Vite SPA**. We chose React + Vite for three decisive engineering reasons:
+
+1. **Authentication Boundary (No SSR or SEO Needed)**:
+   * Next.js specializes in Server-Side Rendering (SSR) and Static Site Generation (SSG) for search engine indexing (SEO) and fast first-contentful paint on public marketing pages.
+   * An enterprise RAG studio, document manager, and graph visualizer live **100% behind authentication**. Search engines will never crawl these pages, eliminating any benefit of SSR while avoiding server-side hydration mismatches and cookie-forwarding complexity.
+
+2. **Decoupled Architecture & Single Python Runtime**:
+   * Next.js requires running a dedicated Node.js production server in addition to the FastAPI backend, doubling operational overhead, memory consumption, and Docker container orchestration.
+   * Vite compiles into pure static assets (`HTML`, `JS`, `CSS`). These static assets can be served by NGINX, Cloudflare Pages, S3, or directly mounted inside FastAPI using `StaticFiles` — requiring zero additional runtime servers.
+
+3. **Development Ergonomics**:
+   * Vite leverages native browser ES Modules (ESM) and Rollup-based bundling. Hot Module Replacement (HMR) operates in milliseconds regardless of codebase scale.
+   * Vite's built-in reverse proxy (`/api` $\rightarrow$ `http://127.0.0.1:8000`) completely circumvents browser Cross-Origin Resource Sharing (CORS) preflight friction during local development.
+
+---
+
+## 13. Pillar 11: Embeddable Micro-Frontend Widget & Shadow DOM Isolation
+
+### The Third-Party Integration Challenge
+A core capability of the OmniGraph platform is providing an embeddable customer-facing chatbot widget that clients can paste onto their existing websites via a simple snippet:
+
+```html
+<script 
+  src="https://cdn.example.com/widget.js" 
+  data-tenant-slug="acme-corp" 
+  data-primary-color="#8B5CF6" 
+  defer>
+</script>
+```
+
+However, embedding arbitrary JavaScript on third-party websites presents severe styling and security challenges:
+* Host websites run varied CSS frameworks (Tailwind CSS, Bootstrap, Material-UI, or legacy WordPress themes) that frequently use aggressive global style resets (e.g. `* { box-sizing: border-box; font-family: 'Comic Sans'; }`, `button { background: red !important; }`).
+* If the chatbot widget was injected directly into the host page's regular DOM (`document.body`), the host site's CSS would override the widget's buttons, typography, and modal dialogs, breaking the user interface.
+* Conversely, the widget's own stylesheets might inadvertently leak out and alter the host website's layout!
+
+### The Solution: Shadow DOM Encapsulation
+Rather than resorting to a clunky `<iframe>` (which suffers from rigid dimensions, mobile viewport clipping, and tricky cross-window messaging), we architected `widget.js` using the **Shadow DOM API**:
+
+```javascript
+// 1. Create host element
+const host = document.createElement('div');
+host.id = 'omnigraph-widget-container';
+document.body.appendChild(host);
+
+// 2. Attach an isolated Shadow Root
+const shadow = host.attachShadow({ mode: 'open' });
+
+// 3. Inject dedicated CSS strictly inside the shadow root
+const style = document.createElement('style');
+style.textContent = `...widget CSS...`;
+shadow.appendChild(style);
+
+// 4. Mount widget launcher bubble and chat modal inside shadow
+shadow.appendChild(widgetDOM);
+```
+
+#### Why Shadow DOM is the Superior Architecture:
+1. **Zero CSS Leakage**: Styles defined inside the shadow root *never* affect the outer host page.
+2. **Complete Immunity to Host CSS**: Host site rules (even `!important` selectors) cannot penetrate the shadow boundary.
+3. **Native DOM Integration**: Unlike an iframe, the widget remains part of the host browser window. It can dynamically expand from a $56\times56\text{px}$ floating launcher button into a $380\times580\text{px}$ chat window without requiring iframe height renegotiation postMessage calls.
+4. **Lightweight (<15KB)**: Written in vanilla JavaScript using native browser APIs, requiring zero client-side dependencies.
+
+### Unauthenticated Public Tenant Querying
+Public website visitors do not possess administrative JWT credentials. To facilitate secure customer interactions without compromising multi-tenant security:
+* We introduced public endpoints: `GET /api/v1/chat/public/{tenant_slug}/config` and `POST /api/v1/chat/public/{tenant_slug}/message`.
+* The server resolves the active tenant via its unique slug, enforces active status checks, and executes `RAGPipelineService.answer_query` strictly scoped to that tenant's vector and graph boundaries.
+* Administrative endpoints (document deletion, chunk re-indexing, user management) remain strictly protected by `Depends(get_current_user)`.
+
+---
+
+## 14. Pillar 12: Interactive Graph Visualization with `vis-network` & Dual Retrieval UX
+
+### Force-Directed Physics Topology
+To make the Neo4j knowledge graph intuitive and actionable for administrators, we integrated `vis-network` in `GraphExplorer.jsx`.
+* **Physics Engine**: Employs the `ForceAtlas2` physics solver. Nodes repel one another based on configurable gravitational constants, while directed edges act as springs that pull connected concepts together.
+* **Semantic Entity Categorization**: Entities are color-coded by category:
+  - `PERSON`: Purple (`#8B5CF6`)
+  - `PROJECT` / `SYSTEM`: Indigo (`#6366F1`)
+  - `TECHNOLOGY` / `LANGUAGE`: Cyan (`#06B6D4`)
+  - `ORGANIZATION` / `COMPANY`: Emerald (`#10B981`)
+  - `CONCEPT` / `OTHER`: Amber (`#F59E0B`)
+* **Dynamic Multi-Hop Expansion**: Clicking any node opens a deep-inspection drawer displaying all incoming and outgoing relational edges, along with an **"Expand Neighborhood from Here"** trigger that automatically queries Neo4j for the next hop.
+
+### Dual-Retrieval UX (Demystifying the "Black Box" of RAG)
+Traditional RAG interfaces output an answer without explaining how the model arrived at its conclusion. OmniGraph provides a **Dual Retrieval Citations Accordion** on every assistant message:
+1. **Document Chunks (pgvector)**: Displays the exact source file name, chunk index, Cosine similarity score percentage, and verbatim chunk text.
+2. **Relational Triples (Neo4j)**: Displays the explicit multi-hop graph paths (e.g. `(FastAPI) --[BUILT_WITH]--> (Python)`) and query entities extracted by Gemini.
+
+This dual citation mechanism provides verifiable provenance, building enterprise trust and eliminating hallucinations.

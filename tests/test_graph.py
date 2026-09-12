@@ -210,6 +210,17 @@ async def test_graph_endpoints_and_cross_tenant_isolation(client: AsyncClient, d
     node_names = [n["name"] for n in neigh_data["nodes"]]
     assert "Alice" in node_names
 
+    # 4b. Check /graph/neighborhood with empty entity_names (initial exploration view)
+    init_neigh_res = await client.post(
+        "/api/v1/graph/neighborhood",
+        headers=headers_a,
+        json={"entity_names": [], "max_hops": 2, "limit": 10},
+    )
+    assert init_neigh_res.status_code == 200
+    init_data = init_neigh_res.json()
+    assert len(init_data["nodes"]) > 0
+    assert "edges" in init_data
+
     # 5. Cross-Tenant Isolation: Tenant B querying for 'Alice' gets nothing
     b_neigh_res = await client.post(
         "/api/v1/graph/neighborhood",

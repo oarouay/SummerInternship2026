@@ -1,4 +1,17 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: graphrag-pgvector
+    ports:
+      - "5434:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=multitenant_db
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
   neo4j:
     image: neo4j:5.26
     container_name: graphrag-neo4j
@@ -14,3 +27,4 @@ services:
 
 volumes:
   neo4j_data:
+  pgvector_data:

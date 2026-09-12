@@ -71,7 +71,8 @@ async def upload_source(
         owner_id=current_user.id
     )
     db.add(source)
-    await db.flush()
+    await db.commit()
+    await db.refresh(source)
 
     # Trigger asynchronous parsing & chunking pipeline
     background_tasks.add_task(process_source_pipeline, source.id)
@@ -106,7 +107,8 @@ async def ingest_raw_text(
         owner_id=current_user.id
     )
     db.add(source)
-    await db.flush()
+    await db.commit()
+    await db.refresh(source)
 
     # Trigger asynchronous parsing & chunking pipeline
     background_tasks.add_task(process_source_pipeline, source.id)
@@ -156,7 +158,8 @@ async def crawl_url(
         owner_id=current_user.id
     )
     db.add(source)
-    await db.flush()
+    await db.commit()
+    await db.refresh(source)
 
     background_tasks.add_task(process_source_pipeline, source.id)
     return source
@@ -243,7 +246,8 @@ async def reprocess_source(
 
     source.status = SourceStatus.PENDING.value
     source.error_message = None
-    await db.flush()
+    await db.commit()
+    await db.refresh(source)
 
     background_tasks.add_task(process_source_pipeline, source.id)
     return source

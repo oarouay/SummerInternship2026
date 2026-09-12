@@ -18,7 +18,9 @@ from app.schemas.conversation import (
     ConversationCreate,
     ConversationListItem,
     ConversationRead,
+    PublicChatMessageRequest,
 )
+from app.schemas.rag import RAGQueryResponse
 from app.services.synthesis import RAGPipelineService
 
 router = APIRouter(prefix="/chat", tags=["Multi-Turn Chat & Conversation Sessions"])
@@ -198,7 +200,8 @@ async def send_chat_message(
         temperature=temperature,
         conversation_history=history,
         persona_tone=tone,
-        custom_system_prompt=sys_prompt
+        custom_system_prompt=sys_prompt,
+        gemini_api_key=config.gemini_api_key if config else None,
     )
 
     # 6. Save Assistant response with citations
@@ -254,3 +257,83 @@ async def delete_conversation(
     await db.delete(conv)
     await db.commit()
     return {"detail": "Conversation deleted successfully."}
+
+
+@router.get(
+    "/public/{tenant_slug}/config",
+    summary="Public endpoint: Get chatbot branding & welcome config for website widget"
+)
+async def get_public_chatbot_config(
+    tenant_slug: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Returns public chatbot branding for website widget embedding without authentication."""
+    stmt = select(Tenant).where(Tenant.slug == tenant_slug.lower(), Tenant.is_active == True)
+    res = await db.execute(stmt)
+    tenant = res.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Organization '{tenant_slug}' not found or is currently inactive."
+        )
+
+    cfg_stmt = select(ChatbotConfig).where(ChatbotConfig.tenant_id == tenant.id)
+    cfg_res = await db.execute(cfg_stmt)
+    config = cfg_res.scalar_one_or_none()
+
+    return {
+        "tenant_name": tenant.name,
+        "tenant_slug": tenant.slug,
+        "name": config.name if config else "Assistant",
+        "avatar_url": config.avatar_url if config else None,
+        "welcome_message": config.welcome_message if config else "Hello! How can I help you today?",
+        "tone": config.tone if config else "professional"
+    }
+
+
+@router.post(
+    "/public/{tenant_slug}/message",
+    response_model=RAGQueryResponse,
+    summary="Public endpoint: Answer website visitor message via GraphRAG"
+)
+async def public_chat_message(
+    tenant_slug: str,
+    payload: PublicChatMessageRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Executes tenant-scoped GraphRAG pipeline for website visitors without requiring admin JWT."""
+    stmt = select(Tenant).where(Tenant.slug == tenant_slug.lower(), Tenant.is_active == True)
+    res = await db.execute(stmt)
+    tenant = res.scalar_one_or_none()
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Organization '{tenant_slug}' not found or is currently inactive."
+        )
+
+    cfg_stmt = select(ChatbotConfig).where(ChatbotConfig.tenant_id == tenant.id)
+    cfg_res = await db.execute(cfg_stmt)
+    config = cfg_res.scalar_one_or_none()
+
+    top_k = config.default_top_k if config else 4
+    max_hops = config.default_max_hops if config else 2
+    tone = config.tone if config else "professional"
+    sys_prompt = config.system_prompt if config else None
+    temperature = config.temperature if config else 0.2
+
+    history = payload.history or []
+
+    rag_response = await RAGPipelineService.answer_query(
+        db=db,
+        tenant_id=tenant.id,
+        query=payload.message,
+        top_k_chunks=top_k,
+        max_graph_hops=max_hops,
+        temperature=temperature,
+        conversation_history=history,
+        persona_tone=tone,
+        custom_system_prompt=sys_prompt,
+        gemini_api_key=config.gemini_api_key if config else None,
+    )
+
+    return rag_response

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     
     # Database (PostgreSQL via asyncpg)
     POSTGRES_SERVER: str = "localhost"
-    POSTGRES_PORT: int = 5432
+    POSTGRES_PORT: int = 5434
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
     POSTGRES_DB: str = "multitenant_db"
@@ -34,7 +34,10 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: Union[List[str], str] = [
         "http://localhost",
         "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
         "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ]
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
@@ -58,10 +61,10 @@ class Settings(BaseSettings):
 
     # Google Gemini & Vector Settings
     GEMINI_API_KEY: Optional[str] = None
-    EMBEDDING_MODEL: str = "text-embedding-004"
+    EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_DIMENSIONS: int = 768
     DEFAULT_SEARCH_TOP_K: int = 5
-    LLM_MODEL: str = "gemini-2.5-flash"
+    LLM_MODEL: str = "gemini-3.8-flash"
 
     # Neo4j Graph Database Settings
     NEO4J_URI: str = "bolt://localhost:7687"

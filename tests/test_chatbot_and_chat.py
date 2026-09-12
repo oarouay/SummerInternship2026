@@ -44,13 +44,14 @@ async def test_chatbot_settings_crud_and_isolation(client: AsyncClient, db_sessi
     assert cfg["name"] == "OmniGraph Assistant"
     assert cfg["tone"] == "professional"
 
-    # 2. Update settings for Tenant A
+    # 2. Update settings for Tenant A including custom Gemini API key
     update_payload = {
         "name": "TitanBot",
         "tone": "technical",
         "welcome_message": "Welcome to Titan security engineering.",
         "default_top_k": 6,
         "default_max_hops": 3,
+        "gemini_api_key": "AIzaSyDummyTestKey12345",
     }
     put_res = await client.put("/api/v1/chatbot/settings", headers=headers_a, json=update_payload)
     assert put_res.status_code == 200
@@ -58,6 +59,9 @@ async def test_chatbot_settings_crud_and_isolation(client: AsyncClient, db_sessi
     assert updated_cfg["name"] == "TitanBot"
     assert updated_cfg["tone"] == "technical"
     assert updated_cfg["default_top_k"] == 6
+    assert updated_cfg["has_custom_api_key"] is True
+    assert updated_cfg["gemini_api_key_preview"] == "••••••••2345"
+    assert "AIzaSyDummyTestKey12345" not in str(updated_cfg)  # Ensure raw secret is never leaked
 
     # 3. Verify Tenant B's settings remain untouched
     b_cfg_res = await client.get("/api/v1/chatbot/settings", headers=headers_b)
@@ -65,6 +69,16 @@ async def test_chatbot_settings_crud_and_isolation(client: AsyncClient, db_sessi
     b_cfg = b_cfg_res.json()
     assert b_cfg["name"] == "OmniGraph Assistant"
     assert b_cfg["tone"] == "professional"
+    assert b_cfg["has_custom_api_key"] is False
+
+    # 4. Revert key for Tenant A
+    revert_res = await client.put("/api/v1/chatbot/settings", headers=headers_a, json={"gemini_api_key": ""})
+    assert revert_res.status_code == 200
+    assert revert_res.json()["has_custom_api_key"] is False
+
+    # 5. Test validate-gemini-key endpoint (empty / no key case)
+    val_res = await client.post("/api/v1/chatbot/validate-gemini-key", headers=headers_a, json={})
+    assert val_res.status_code == 200
 
 
 @pytest.mark.asyncio

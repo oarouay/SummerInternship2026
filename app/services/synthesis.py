@@ -122,7 +122,7 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
     Production synthesizer using Google Gemini (gemini-2.5-flash) with grounded prompt engineering.
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3.8-flash"):
         from google import genai
 
         self.client = genai.Client(api_key=api_key)
@@ -191,12 +191,13 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
             )
 
 
-def get_rag_synthesizer() -> BaseRAGSynthesizer:
+def get_rag_synthesizer(api_key: Optional[str] = None) -> BaseRAGSynthesizer:
     """Factory returning GeminiRAGSynthesizer if API key is present, else MockRAGSynthesizer."""
-    if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+    effective_key = (api_key and api_key.strip()) or (settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
+    if effective_key:
         try:
             return GeminiRAGSynthesizer(
-                api_key=settings.GEMINI_API_KEY,
+                api_key=effective_key,
                 model=settings.LLM_MODEL
             )
         except Exception as e:
@@ -230,16 +231,17 @@ class RAGPipelineService:
         conversation_history: Optional[List[dict]] = None,
         persona_tone: Optional[str] = None,
         custom_system_prompt: Optional[str] = None,
+        gemini_api_key: Optional[str] = None,
     ) -> RAGQueryResponse:
         start_time = time.perf_counter()
 
         # Step 1: Query Analysis & Seed Entity Extraction
-        extractor = get_graph_extractor()
+        extractor = get_graph_extractor(api_key=gemini_api_key)
         query_graph = await extractor.extract_graph(query)
         detected_entities = [e.name for e in query_graph.entities]
 
         # Step 2: Track A - Semantic Vector Retrieval (pgvector)
-        embedding_service = get_embedding_service()
+        embedding_service = get_embedding_service(api_key=gemini_api_key)
         query_vector = await embedding_service.embed_query(query)
 
         chunks: List[SearchResult] = await search_similar_chunks(
@@ -262,7 +264,7 @@ class RAGPipelineService:
             )
 
         # Step 4: Context Fusion & Grounded LLM Synthesis
-        synthesizer = get_rag_synthesizer()
+        synthesizer = get_rag_synthesizer(api_key=gemini_api_key)
         answer = await synthesizer.synthesize(
             query=query,
             chunks=chunks,
