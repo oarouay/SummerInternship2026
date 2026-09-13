@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
@@ -152,11 +153,13 @@ class GeminiGraphDisambiguator(BaseGraphDisambiguator):
     Production Graph Disambiguation Specialist leveraging Google Gemini
     with structured JSON response schemas and automatic fallback to MockGraphDisambiguator.
     """
+    _quota_cooldown_until: float = 0.0
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, model: Optional[str] = None):
         from google import genai
 
         self.client = genai.Client(api_key=api_key)
+        self.model = model or settings.LLM_MODEL
         self.fallback = MockGraphDisambiguator()
 
     async def disambiguate(
@@ -166,6 +169,16 @@ class GeminiGraphDisambiguator(BaseGraphDisambiguator):
         popular_tenant_topics: Optional[List[str]] = None,
     ) -> DisambiguationResult:
         popular_topics = popular_tenant_topics or []
+
+        now = time.time()
+        if now < GeminiGraphDisambiguator._quota_cooldown_until:
+            logger.debug("Gemini disambiguator in quota cooldown window. Fast falling back to mock.")
+            return await self.fallback.disambiguate(
+                user_query=user_query,
+                candidate_entities=candidate_entities,
+                popular_tenant_topics=popular_topics,
+            )
+
         candidates_data = [
             {
                 "name": c.name,
@@ -202,7 +215,7 @@ class GeminiGraphDisambiguator(BaseGraphDisambiguator):
             from google.genai import types
 
             response = self.client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=self.model,
                 contents=user_prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
@@ -222,7 +235,15 @@ class GeminiGraphDisambiguator(BaseGraphDisambiguator):
             data = json.loads(raw_text.strip())
             return DisambiguationResult(**data)
         except Exception as e:
-            logger.warning(f"GeminiGraphDisambiguator encountered error, falling back to mock: {e}")
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                GeminiGraphDisambiguator._quota_cooldown_until = time.time() + 60.0
+                logger.warning(
+                    f"Gemini disambiguator hit quota limit (429 RESOURCE_EXHAUSTED) for model '{self.model}'. "
+                    "Enabling 60s cooldown and falling back to mock."
+                )
+            else:
+                logger.warning(f"GeminiGraphDisambiguator encountered error, falling back to mock: {e}")
             return await self.fallback.disambiguate(
                 user_query=user_query,
                 candidate_entities=candidate_entities,

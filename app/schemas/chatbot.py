@@ -44,5 +44,5 @@ class GeminiKeyValidationRequest(BaseModel):
 
 class GeminiKeyValidationResponse(BaseModel):
     valid: bool
-    model: str = "gemini-3.8-flash"
+    model: str = "gemini-flash-lite-latest"
     message: str

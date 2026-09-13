@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -81,8 +82,9 @@ class GeminiGraphExtractor(BaseGraphExtractor):
     """
     Google Gemini Knowledge Graph Extractor using structured JSON schema.
     """
+    _quota_cooldown_until: float = 0.0
 
-    def __init__(self, api_key: str, model: str = "gemini-3.8-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-flash-lite-latest"):
         from google import genai
         from google.genai import types
 
@@ -93,6 +95,11 @@ class GeminiGraphExtractor(BaseGraphExtractor):
     async def extract_graph(self, text: str) -> GraphExtractionResult:
         if not text.strip():
             return GraphExtractionResult()
+
+        now = time.time()
+        if now < GeminiGraphExtractor._quota_cooldown_until:
+            logger.debug("Gemini graph extraction within quota cooldown window. Fast falling back to rule-based extractor.")
+            return await MockGraphExtractor().extract_graph(text)
 
         prompt = f"""
         You are an expert Knowledge Graph construction AI.
@@ -120,7 +127,15 @@ class GeminiGraphExtractor(BaseGraphExtractor):
             )
             return GraphExtractionResult.model_validate_json(response.text)
         except Exception as e:
-            logger.exception(f"Gemini graph extraction failed: {e}. Falling back to rule-based extractor.")
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                GeminiGraphExtractor._quota_cooldown_until = time.time() + 60.0
+                logger.warning(
+                    f"Gemini graph extraction hit quota limit (429 RESOURCE_EXHAUSTED) for model '{self.model}'. "
+                    "Enabling 60s cooldown and falling back to rule-based extractor."
+                )
+            else:
+                logger.warning(f"Gemini graph extraction failed: {e}. Falling back to rule-based extractor.")
             return await MockGraphExtractor().extract_graph(text)
 
 

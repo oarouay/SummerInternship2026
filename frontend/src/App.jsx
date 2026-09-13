@@ -124,7 +124,7 @@ export default function App() {
             <span>RLS Isolation Active</span>
           </span>
           <span>·</span>
-          <span>Model: <strong style={{ color: 'var(--text-secondary)' }}>gemini-3.8-flash</strong></span>
+          <span>Model: <strong style={{ color: 'var(--text-secondary)' }}>gemini-flash-lite-latest</strong></span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

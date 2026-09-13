@@ -231,7 +231,9 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
     and structured JSON output conforming to SynthesisResult.
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-3.8-flash"):
+    _quota_cooldown_until: float = 0.0
+
+    def __init__(self, api_key: str, model: str = "gemini-flash-lite-latest"):
         from google import genai
 
         self.client = genai.Client(api_key=api_key)
@@ -249,6 +251,13 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
         persona_tone: Optional[str] = None,
         custom_system_prompt: Optional[str] = None,
     ) -> SynthesisResult:
+        now = time.time()
+        if now < GeminiRAGSynthesizer._quota_cooldown_until:
+            logger.debug("Gemini RAG synthesis in quota cooldown window. Fast falling back to mock synthesizer.")
+            return await self.mock_fallback.synthesize(
+                query, chunks, graph, candidate_concepts, temperature, conversation_history, persona_tone, custom_system_prompt
+            )
+
         context_str = build_fusion_context(chunks, graph, candidate_concepts)
 
         tone_directive = f"\nAdopt the requested Persona at all times: {persona_tone}." if persona_tone else ""
@@ -279,19 +288,33 @@ JSON RESPONSE:
                 contents=prompt,
                 config={
                     "response_mime_type": "application/json",
+                    "response_schema": SynthesisResult,
                     "temperature": temperature,
                 }
             )
             raw_json = response.text.strip()
-            data = json.loads(raw_json)
+            if raw_json.startswith("```json"):
+                raw_json = raw_json[7:]
+            if raw_json.endswith("```"):
+                raw_json = raw_json[:-3]
+            data = json.loads(raw_json.strip())
+            resolved_answer = data.get("answer") or data.get("response") or data.get("content") or ""
             return SynthesisResult(
-                answer=data.get("answer", ""),
+                answer=resolved_answer,
                 follow_up_suggestions=data.get("follow_up_suggestions", []),
                 needs_clarification=data.get("needs_clarification", False),
                 match_type=data.get("match_type", "complete"),
             )
         except Exception as e:
-            logger.exception(f"Gemini RAG synthesis failed: {e}. Falling back to mock synthesizer.")
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                GeminiRAGSynthesizer._quota_cooldown_until = time.time() + 60.0
+                logger.warning(
+                    f"Gemini RAG synthesis hit quota limit (429 RESOURCE_EXHAUSTED) for model '{self.model}'. "
+                    "Enabling 60s cooldown and falling back to mock synthesizer."
+                )
+            else:
+                logger.warning(f"Gemini RAG synthesis failed: {e}. Falling back to mock synthesizer.")
             return await self.mock_fallback.synthesize(
                 query, chunks, graph, candidate_concepts, temperature, conversation_history, persona_tone, custom_system_prompt
             )
