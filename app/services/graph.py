@@ -5,6 +5,7 @@ from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
 
 from app.core.config import settings
+from app.schemas.disambiguation import CandidateEntity
 from app.schemas.graph import (
     GraphEdge,
     GraphExtractionResult,
@@ -46,6 +47,20 @@ class BaseGraphStore(ABC):
     @abstractmethod
     async def delete_tenant_graph(self, tenant_id: int) -> None:
         """Purge an entire tenant's graph upon account deletion."""
+        pass
+
+    @abstractmethod
+    async def find_candidate_entities(
+        self, tenant_id: int, query: str, limit: int = 5
+    ) -> List[CandidateEntity]:
+        """Fuzzy-match entities in tenant subgraph and collect 1-hop neighbor names."""
+        pass
+
+    @abstractmethod
+    async def get_popular_topics(
+        self, tenant_id: int, limit: int = 5
+    ) -> List[str]:
+        """Retrieve high-degree central nodes in the tenant's graph."""
         pass
 
 
@@ -227,6 +242,70 @@ class InMemoryGraphStore(BaseGraphStore):
             del self._nodes[tenant_id]
         if tenant_id in self._edges:
             del self._edges[tenant_id]
+
+    async def find_candidate_entities(
+        self, tenant_id: int, query: str, limit: int = 5
+    ) -> List[CandidateEntity]:
+        self._ensure_tenant(tenant_id)
+        t_nodes = self._nodes[tenant_id]
+        t_edges = self._edges[tenant_id]
+        query_lower = query.lower().strip()
+        query_words = set(query_lower.split())
+
+        scored_candidates = []
+        for name, data in t_nodes.items():
+            name_lower = name.lower()
+            desc_lower = (data.get("description") or "").lower()
+            name_words = set(name_lower.split())
+
+            score = 0.0
+            if query_lower in name_lower or name_lower in query_lower:
+                score += 1.0
+            overlap = len(query_words.intersection(name_words))
+            if overlap > 0:
+                score += overlap * 0.8
+            if any(w in desc_lower for w in query_words if len(w) > 2):
+                score += 0.3
+
+            if score > 0:
+                # 1-hop connected neighbors
+                neighbors = []
+                for (src, tgt, _rtype) in t_edges.keys():
+                    if src == name and tgt != name and tgt not in neighbors:
+                        neighbors.append(tgt)
+                    elif tgt == name and src != name and src not in neighbors:
+                        neighbors.append(src)
+
+                scored_candidates.append(
+                    (score, CandidateEntity(
+                        name=name,
+                        type=data.get("type", "CONCEPT"),
+                        description=data.get("description", ""),
+                        neighbors=neighbors[:6],
+                        score=round(score, 2)
+                    ))
+                )
+
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        return [c for _, c in scored_candidates[:limit]]
+
+    async def get_popular_topics(
+        self, tenant_id: int, limit: int = 5
+    ) -> List[str]:
+        self._ensure_tenant(tenant_id)
+        t_nodes = self._nodes[tenant_id]
+        t_edges = self._edges[tenant_id]
+
+        degrees: Dict[str, int] = {name: 0 for name in t_nodes}
+        for (src, tgt, _rtype), ed in t_edges.items():
+            weight = ed.get("weight", 1)
+            if src in degrees:
+                degrees[src] += weight
+            if tgt in degrees:
+                degrees[tgt] += weight
+
+        sorted_topics = sorted(degrees.items(), key=lambda x: (x[1], x[0]), reverse=True)
+        return [name for name, _ in sorted_topics[:limit]]
 
 
 class Neo4jGraphStore(BaseGraphStore):
@@ -423,6 +502,54 @@ class Neo4jGraphStore(BaseGraphStore):
         """
         async with self.driver.session() as session:
             await session.run(cypher, tenant_id=tenant_id)
+
+    async def find_candidate_entities(
+        self, tenant_id: int, query: str, limit: int = 5
+    ) -> List[CandidateEntity]:
+        await self.initialize()
+        clean_query = query.strip()
+        cypher = """
+        MATCH (e:Entity {tenant_id: $tenant_id})
+        WHERE toLower(e.name) CONTAINS toLower($query) 
+           OR toLower($query) CONTAINS toLower(e.name)
+           OR (e.description IS NOT NULL AND toLower(e.description) CONTAINS toLower($query))
+        OPTIONAL MATCH (e)-[:RELATION]-(neighbor:Entity {tenant_id: $tenant_id})
+        RETURN e.name AS name, 
+               e.type AS type, 
+               e.description AS description, 
+               collect(DISTINCT neighbor.name)[..6] AS neighbors
+        LIMIT $limit
+        """
+        async with self.driver.session() as session:
+            result = await session.run(cypher, tenant_id=tenant_id, query=clean_query, limit=limit)
+            records = [rec async for rec in result]
+
+        return [
+            CandidateEntity(
+                name=rec["name"],
+                type=rec.get("type", "CONCEPT"),
+                description=rec.get("description", ""),
+                neighbors=rec.get("neighbors", []),
+            )
+            for rec in records
+        ]
+
+    async def get_popular_topics(
+        self, tenant_id: int, limit: int = 5
+    ) -> List[str]:
+        await self.initialize()
+        cypher = """
+        MATCH (e:Entity {tenant_id: $tenant_id})
+        OPTIONAL MATCH (e)-[r:RELATION]-()
+        RETURN e.name AS name, count(r) AS degree
+        ORDER BY degree DESC, e.name ASC
+        LIMIT $limit
+        """
+        async with self.driver.session() as session:
+            result = await session.run(cypher, tenant_id=tenant_id, limit=limit)
+            records = [rec async for rec in result]
+
+        return [rec["name"] for rec in records if rec.get("name")]
 
 
 # Singleton instances

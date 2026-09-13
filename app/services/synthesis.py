@@ -16,6 +16,7 @@ from app.schemas.rag import (
 from app.schemas.router import RouterAction
 from app.schemas.search import SearchResult
 from app.schemas.synthesis import SynthesisResult
+from app.services.disambiguation import get_graph_disambiguator
 from app.services.embedding import get_embedding_service
 from app.services.extractor import get_graph_extractor
 from app.services.graph import get_graph_store
@@ -405,16 +406,27 @@ class RAGPipelineService:
             )
             candidate_concepts = [n.name for n in graph_response.nodes if n.name not in detected_entities]
 
-        # In zero-match or low-confidence cases, fetch tenant candidate concepts to bridge the knowledge gap
+        # In zero-match or low-confidence cases, engage Graph Disambiguation Specialist
         if not chunks and not graph_response.edges:
             try:
-                if hasattr(graph_store, "get_all_entities"):
-                    all_ents = await graph_store.get_all_entities(tenant_id=tenant_id, limit=5)
-                    candidate_concepts.extend([e.name for e in all_ents if e.name not in candidate_concepts])
+                candidates = await graph_store.find_candidate_entities(
+                    tenant_id=tenant_id, query=effective_query, limit=5
+                )
+                popular_topics = await graph_store.get_popular_topics(
+                    tenant_id=tenant_id, limit=5
+                )
+                if candidates or popular_topics:
+                    disambiguator = get_graph_disambiguator(api_key=gemini_api_key)
+                    disambig_res = await disambiguator.disambiguate(
+                        user_query=effective_query,
+                        candidate_entities=candidates,
+                        popular_tenant_topics=popular_topics,
+                    )
+                    candidate_concepts.extend([c for c in disambig_res.suggested_chips if c not in candidate_concepts])
                 elif graph_response.nodes:
                     candidate_concepts.extend([n.name for n in graph_response.nodes if n.name not in candidate_concepts])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Disambiguation specialist hook notice: {e}")
 
         # Step 4: Context Fusion & Grounded LLM Synthesis
         synthesizer = get_rag_synthesizer(api_key=gemini_api_key)

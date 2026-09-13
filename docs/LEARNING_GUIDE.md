@@ -593,3 +593,43 @@ Once vector chunks and graph edges are retrieved, the **Grounded Synthesis Engin
 ### Multi-Model & Fallback Resilience
 Both the Conversational Router and Grounded Synthesizer leverage Google Gemini with structured JSON output schemas (`ConversationalRouteResult` and `SynthesisResult`), backed by deterministic, rule-based mock fallbacks (`MockConversationalRouter` and `MockRAGSynthesizer`). If external API rate limits (HTTP 429) or transient network errors occur, the system transparently falls back without crashing the user session.
 
+---
+
+### The Graph Disambiguation Specialist
+
+When a user query fails to produce high-confidence document chunks or exact-match graph paths, fuzzy search across the tenant's Knowledge Graph yields candidate entities and neighborhood connections. The **Graph Disambiguation Specialist** analyzes these candidate nodes, filters out noisy substring matches, resolves why retrieval failed, and generates a structured, natural disambiguation response with clickable UI chips.
+
+```
+[User Query with 0 Chunks & 0 Exact Edges]
+                     │
+                     ▼
+         [Fuzzy Graph Candidate Retrieval]
+         (Candidate Nodes + 1-Hop Neighbors)
+                     │
+                     ▼
+       [Graph Disambiguation Specialist]
+                     │
+        ┌────────────┼────────────┐
+        ▼            ▼            ▼
+  entity_split adjacent_topics unindexed_fallback
+ (Multiple    (Single Concept +   (No Matches;
+  Systems)     Neighborhood)    Popular Topics)
+        │            │            │
+        └────────────┼────────────┘
+                     ▼
+       [Structured Disambiguation JSON]
+   (Explanation + 2-4 Interactive Chips)
+```
+
+#### Operating Strategies:
+1. **`entity_split`**:
+   - Triggered when multiple relevant candidate entities share conceptual roots or systems (e.g. `"Titan"` $\rightarrow$ `"Project Titan"`, `"Titan DB"`, `"Titan SDK"`).
+   - Formulates an explanation detailing the distinct systems discovered in the graph and asks a focused question clarifying which specific system the user requires.
+2. **`adjacent_topics`**:
+   - Triggered when a single candidate node or focused neighborhood is matched (e.g. query on token revocation matches `"Hydra Auth"` with 1-hop neighbor `"Token Revocation Service"`).
+   - Explains the closest indexed concept and offers adjacent neighborhood connections as clickable exploration options.
+3. **`unindexed_fallback`**:
+   - Triggered when no candidate entities match the user's intent.
+   - Leverages high-degree central nodes (`popular_tenant_topics`) in the tenant's knowledge graph to present active domain topics, rather than returning a generic dead end.
+
+
