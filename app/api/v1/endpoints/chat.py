@@ -115,7 +115,6 @@ async def get_conversation(
     """Retrieve all messages and citations in a specific conversation session."""
     stmt = (
         select(Conversation)
-        .options(selectinload(Conversation.messages))
         .where(Conversation.id == conversation_id, Conversation.tenant_id == tenant.id)
     )
     res = await db.execute(stmt)
@@ -126,13 +125,21 @@ async def get_conversation(
             detail="Conversation not found in your organization."
         )
 
+    msg_stmt = (
+        select(ChatMessage)
+        .where(ChatMessage.conversation_id == conversation_id, ChatMessage.tenant_id == tenant.id)
+        .order_by(ChatMessage.id.asc())
+    )
+    msg_res = await db.execute(msg_stmt)
+    messages = msg_res.scalars().all()
+
     return ConversationRead(
         id=conv.id,
         tenant_id=conv.tenant_id,
         title=conv.title,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
-        messages=[ChatMessageRead.from_orm_with_citations(m) for m in conv.messages]
+        messages=[ChatMessageRead.from_orm_with_citations(m) for m in messages]
     )
 
 
@@ -189,6 +196,7 @@ async def send_chat_message(
         content=payload.message
     )
     db.add(user_msg)
+    conv.messages.append(user_msg)
 
     # 5. Call RAG Pipeline with conversation history
     rag_response = await RAGPipelineService.answer_query(
@@ -204,8 +212,13 @@ async def send_chat_message(
         gemini_api_key=config.gemini_api_key if config else None,
     )
 
-    # 6. Save Assistant response with citations
+    # 6. Save Assistant response with citations and router action
     citations_data = {
+        "action": rag_response.action,
+        "clarification_options": rag_response.clarification_options,
+        "standalone_query": rag_response.standalone_query,
+        "follow_up_suggestions": rag_response.follow_up_suggestions,
+        "needs_clarification": rag_response.needs_clarification,
         "sources": [s.model_dump() for s in rag_response.source_citations],
         "graph": [g.model_dump() for g in rag_response.graph_citations],
         "entities_detected": rag_response.entities_detected,
@@ -219,6 +232,7 @@ async def send_chat_message(
         citations_json=json.dumps(citations_data)
     )
     db.add(assistant_msg)
+    conv.messages.append(assistant_msg)
 
     # 7. Update title if first message
     if conv.title == "New Conversation":

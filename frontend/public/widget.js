@@ -210,6 +210,39 @@
       border-radius: 14px 14px 14px 2px;
     }
 
+    .widget-chips-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .widget-chip {
+      background: #1F2937;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #E2E8F0;
+      border-radius: 12px;
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .widget-chip:hover {
+      background: ${primaryColor};
+      border-color: ${primaryColor};
+      color: #FFFFFF;
+    }
+
+    .widget-chip.clarification-chip {
+      border-color: ${primaryColor};
+      color: #C4B5FD;
+    }
+
     .typing-indicator {
       display: flex;
       gap: 4px;
@@ -359,13 +392,45 @@
   closeBtn.addEventListener('click', toggleChat);
 
   // Render a message row
-  function appendMessage(role, text) {
+  function appendMessage(role, text, options = {}) {
     const row = document.createElement('div');
     row.className = `msg-row ${role}`;
     const bubble = document.createElement('div');
     bubble.className = 'msg-bubble';
     bubble.textContent = text;
     row.appendChild(bubble);
+
+    // Render interactive chips for assistant messages
+    if (role === 'assistant') {
+      const { clarification_options, follow_up_suggestions } = options;
+
+      if (clarification_options && clarification_options.length > 0) {
+        const wrap = document.createElement('div');
+        wrap.className = 'widget-chips-wrap';
+        clarification_options.forEach(opt => {
+          const btn = document.createElement('button');
+          btn.className = 'widget-chip clarification-chip';
+          btn.textContent = opt + ' →';
+          btn.onclick = () => submitVisitorMessage(opt);
+          wrap.appendChild(btn);
+        });
+        row.appendChild(wrap);
+      }
+
+      if (follow_up_suggestions && follow_up_suggestions.length > 0) {
+        const wrap = document.createElement('div');
+        wrap.className = 'widget-chips-wrap';
+        follow_up_suggestions.forEach(sug => {
+          const btn = document.createElement('button');
+          btn.className = 'widget-chip suggestion-chip';
+          btn.textContent = sug + ' →';
+          btn.onclick = () => submitVisitorMessage(sug);
+          wrap.appendChild(btn);
+        });
+        row.appendChild(wrap);
+      }
+    }
+
     messagesContainer.appendChild(row);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
   }
@@ -410,14 +475,13 @@
   }
 
   // 7. Handle Visitor Input & GraphRAG Answering
-  inputForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const message = chatInput.value.trim();
-    if (!message) return;
+  async function submitVisitorMessage(message) {
+    if (!message || !message.trim()) return;
+    const cleanMsg = message.trim();
 
     chatInput.value = '';
-    appendMessage('user', message);
-    conversationHistory.push({ role: 'user', content: message });
+    appendMessage('user', cleanMsg);
+    conversationHistory.push({ role: 'user', content: cleanMsg });
     showTyping();
 
     try {
@@ -425,7 +489,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message,
+          message: cleanMsg,
           history: conversationHistory.slice(-6), // keep last 6 turns for context
         }),
       });
@@ -439,13 +503,21 @@
 
       const data = await res.json();
       const answer = data.answer || 'I could not generate an answer for that query.';
-      appendMessage('assistant', answer);
+      appendMessage('assistant', answer, {
+        clarification_options: data.clarification_options,
+        follow_up_suggestions: data.follow_up_suggestions,
+      });
       conversationHistory.push({ role: 'assistant', content: answer });
     } catch (err) {
       hideTyping();
       appendMessage('assistant', 'Sorry, I encountered an issue retrieving that information. Please try again in a moment.');
       console.error('[OmniGraph Widget Error]:', err);
     }
+  }
+
+  inputForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitVisitorMessage(chatInput.value);
   });
 
   // Start initialization

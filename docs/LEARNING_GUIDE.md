@@ -533,3 +533,63 @@ Traditional RAG interfaces output an answer without explaining how the model arr
 2. **Relational Triples (Neo4j)**: Displays the explicit multi-hop graph paths (e.g. `(FastAPI) --[BUILT_WITH]--> (Python)`) and query entities extracted by Gemini.
 
 This dual citation mechanism provides verifiable provenance, building enterprise trust and eliminating hallucinations.
+
+---
+
+## 15. Pillar 13: Conversational Routing & Grounded Synthesis Engine
+
+### The Conversational Routing Engine (Step 0)
+Traditional RAG pipelines blindly execute vector similarity searches and knowledge graph traversals on every user input. This causes severe latency spikes, wastes database connection pool bandwidth, and produces hallucinated or awkward answers for simple human interactions (such as greetings, thanks, or broad, underspecified questions).
+
+To eliminate this waste, OmniGraph introduces the **Conversational Routing Engine**:
+
+```
+[Incoming User Query + Conversation History]
+                     │
+                     ▼
+       [Conversational Routing Engine]
+                     │
+         ┌───────────┼───────────┐
+         ▼           ▼           ▼
+  direct_response  clarify    retrieve
+  (Early Exit)   (Early Exit)    │
+                                 ▼
+                     [Coreference Resolution]
+                     (Pronoun & Context Rewriting)
+                                 │
+                                 ▼
+                     [Seed Entity Normalization]
+                     (Casing, Proper Nouns, Acronyms)
+                                 │
+                                 ▼
+                     [Vector & Neo4j Retrieval]
+```
+
+1. **Intent Classification & Action Selection**:
+   - `direct_response`: Greetings ("Hi", "Good morning"), gratitude ("Thanks!"), and closings ("Bye"). Bypasses all database retrieval and responds conversationally.
+   - `clarify`: Broad or underspecified queries ("How do I deploy?", "Show me the logs"). Returns an explicit clarifying question with 2–4 clickable `clarification_options` pills instead of blind database queries.
+   - `retrieve`: Focused domain queries or specific follow-ups. Proceeds to hybrid search.
+
+2. **Multi-Turn Pronoun Coreference Resolution**:
+   - Resolves ambiguous anaphoric pronouns (`it`, `they`, `that tool`, `its dependencies`) by inspecting previous conversational turns.
+   - Example: Turn 1: *"Tell me about Project Titan."* $\rightarrow$ Turn 2: *"What does it depend on?"* $\rightarrow$ The engine rewrites the query into the standalone prompt: *"What does Project Titan depend on?"*.
+
+3. **Normalized Seed Entity Extraction**:
+   - Identifies candidate graph nodes directly from user input.
+   - Enforces casing normalization rules (Title Case for systems and projects, UPPERCASE for acronyms like `JWT`, `CVE`, `RBAC`, `API`) and strips imperative verbs (`Explain`, `Show`, `Find`).
+
+---
+
+### The Grounded Synthesis Engine
+
+Once vector chunks and graph edges are retrieved, the **Grounded Synthesis Engine** generates authoritative, strictly grounded responses while preventing hallucinations:
+
+| Retrieval State | Synthesis Strategy | `needs_clarification` | Follow-Up Behavior |
+| :--- | :--- | :---: | :--- |
+| **Complete Match** (Chunks + Graph Triples) | Cross-synthesizes unstructured narrative with structured relational edges. Cites source documents and graph triples directly. | `False` | Generates 2–3 forward-looking technical suggestions to explore adjacent systems. |
+| **Partial Match** (Chunks only or Graph only) | Clearly delineates confirmed facts versus unverified or missing aspects (`"Based on documentation, [...]. However, records do not detail [...]"`). | `True` | Formulates a focused clarifying question with suggestion chips. |
+| **Zero Match / Low Confidence** (No relevant records) | Avoids generic dismissals like "I don't know" or "Insufficient information". Clearly states missing records and inspects **Candidate Graph Concepts** in the tenant subgraph to bridge the gap. | `True` | Populates suggestions with candidate entities (`"Did you mean Project Titan or Hydra Auth?"`). |
+
+### Multi-Model & Fallback Resilience
+Both the Conversational Router and Grounded Synthesizer leverage Google Gemini with structured JSON output schemas (`ConversationalRouteResult` and `SynthesisResult`), backed by deterministic, rule-based mock fallbacks (`MockConversationalRouter` and `MockRAGSynthesizer`). If external API rate limits (HTTP 429) or transient network errors occur, the system transparently falls back without crashing the user session.
+

@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -12,22 +13,61 @@ from app.schemas.rag import (
     RAGQueryResponse,
     RAGSourceCitation,
 )
+from app.schemas.router import RouterAction
 from app.schemas.search import SearchResult
+from app.schemas.synthesis import SynthesisResult
 from app.services.embedding import get_embedding_service
 from app.services.extractor import get_graph_extractor
 from app.services.graph import get_graph_store
+from app.services.router import get_conversational_router
 from app.services.search import search_similar_chunks
 
 logger = logging.getLogger(__name__)
 
+GROUNDED_SYNTHESIS_SYSTEM_INSTRUCTION = """
+You are the Grounded Synthesis Engine for an enterprise knowledge retrieval system.
+Your mission is to generate accurate, direct, and dynamic responses using strictly the provided Document Passages, Verified Graph Triples, and Candidate Graph Concepts.
+
+Adopt the requested Tenant Persona at all times (e.g., technical, concise, professional).
+Output strictly valid JSON matching the requested schema.
+
+### Context Handling Rules:
+
+1. COMPLETE MATCH:
+- Answer the user's query directly and authoritatively.
+- Synthesize information across both unstructured Document Passages and structured Graph Triples.
+- Maintain absolute fidelity: do NOT speculate, fabricate, or extrapolate beyond the verified facts.
+- Generate 2 to 3 intelligent, forward-looking suggestions in "follow_up_suggestions" that guide the user to explore deeper technical connections or adjacent systems. Set "needs_clarification" to false.
+
+2. PARTIAL MATCH:
+- Delineate what the knowledge base confirms versus what is missing.
+- Format: "Based on your organization's documentation, [confirmed facts]. However, the records do not detail [missing specific aspect]."
+- Ask a focused clarifying question at the end of your response to help resolve the missing aspect.
+- Populate "follow_up_suggestions" with specific paths the user can take based on the available data. Set "needs_clarification" to true.
+
+3. ZERO MATCH OR LOW CONFIDENCE:
+- If no document passages meet the relevance threshold and no graph paths confirm the query:
+  * Never state generic non-answers like "I don't know" or "Insufficient information."
+  * State clearly: "I could not find records directly answering [User Query] in your organization's indexed knowledge base."
+  * Inspect the provided "Candidate Graph Concepts". If candidate entities or adjacent tenant topics are present, bridge the gap: "However, I found related entities in your knowledge graph: [List 2-3 candidate entities with brief context]. Would you like to inspect one of these?"
+  * Populate "follow_up_suggestions" directly with the names of these candidate entities.
+  * Set "needs_clarification" to true.
+
+### Formatting & Style:
+- Use clear Markdown with bold text and bullet points for complex breakdowns.
+- Cite specific document titles and relational triples inline where appropriate.
+- Keep the synthesis tone helpful, grounded, and collaborative.
+"""
+
 
 def build_fusion_context(
     chunks: List[SearchResult],
-    graph: GraphNeighborhoodResponse
+    graph: GraphNeighborhoodResponse,
+    candidate_concepts: Optional[List[str]] = None,
 ) -> str:
     """
-    Fuses unstructured text passages and structured knowledge graph triples
-    into a unified markdown prompt context.
+    Fuses unstructured text passages, structured knowledge graph triples,
+    and candidate graph concepts into a unified markdown prompt context.
     """
     sections = []
 
@@ -55,6 +95,13 @@ def build_fusion_context(
             )
         sections.append("\n\n".join(chunk_lines))
 
+    # 3. Candidate Graph Concepts
+    if candidate_concepts:
+        cand_lines = ["### 💡 Candidate Knowledge Graph Concepts:"]
+        for cand in candidate_concepts:
+            cand_lines.append(f"- {cand}")
+        sections.append("\n".join(cand_lines))
+
     if not sections:
         return "No relevant context found in the organization's knowledge base."
 
@@ -70,11 +117,12 @@ class BaseRAGSynthesizer(ABC):
         query: str,
         chunks: List[SearchResult],
         graph: GraphNeighborhoodResponse,
+        candidate_concepts: Optional[List[str]] = None,
         temperature: float = 0.2,
         conversation_history: Optional[List[dict]] = None,
         persona_tone: Optional[str] = None,
         custom_system_prompt: Optional[str] = None,
-    ) -> str:
+    ) -> SynthesisResult:
         """Synthesizes a grounded answer from fused vector and graph context."""
         pass
 
@@ -82,7 +130,7 @@ class BaseRAGSynthesizer(ABC):
 class MockRAGSynthesizer(BaseRAGSynthesizer):
     """
     Deterministic rule-based synthesizer for unit testing and offline development.
-    Requires no API keys and produces predictable, testable answers.
+    Adheres strictly to Complete Match, Partial Match, and Zero Match rules.
     """
 
     async def synthesize(
@@ -90,36 +138,96 @@ class MockRAGSynthesizer(BaseRAGSynthesizer):
         query: str,
         chunks: List[SearchResult],
         graph: GraphNeighborhoodResponse,
+        candidate_concepts: Optional[List[str]] = None,
         temperature: float = 0.2,
         conversation_history: Optional[List[dict]] = None,
         persona_tone: Optional[str] = None,
         custom_system_prompt: Optional[str] = None,
-    ) -> str:
-        if not chunks and not graph.edges and not graph.nodes:
-            return "Based on your organization's knowledge base, there is insufficient information to answer this question."
+    ) -> SynthesisResult:
+        candidates = candidate_concepts or [n.name for n in graph.nodes]
 
-        parts = []
+        # Case 3: ZERO MATCH OR LOW CONFIDENCE
+        if not chunks and not graph.edges:
+            base_answer = f"I could not find records directly answering '{query}' in your organization's indexed knowledge base."
+            if candidates:
+                top_candidates = candidates[:3]
+                candidate_str = ", ".join(top_candidates)
+                answer = (
+                    f"{base_answer} However, I found related entities in your knowledge graph: {candidate_str}. "
+                    f"Would you like to inspect one of these?"
+                )
+                suggestions = [f"Inspect {c}" for c in top_candidates]
+            else:
+                answer = base_answer
+                suggestions = []
 
-        # Graph synthesis
-        if graph.edges:
+            return SynthesisResult(
+                answer=answer,
+                follow_up_suggestions=suggestions,
+                needs_clarification=True,
+                match_type="zero_match",
+            )
+
+        # Case 1: COMPLETE MATCH (both chunks and graph edges present)
+        if chunks and graph.edges:
+            parts = []
             edge_strs = [f"{e.source} {e.type.lower().replace('_', ' ')} {e.target}" for e in graph.edges]
             parts.append(f"According to the knowledge graph, {', and '.join(edge_strs)}.")
-
-        # Chunk synthesis
-        if chunks:
             top_chunk = chunks[0]
             snippet = top_chunk.content[:180].strip().replace("\n", " ")
             parts.append(f"Referencing \"{top_chunk.source_name}\": {snippet}...")
+            if conversation_history:
+                parts.append(f"(Follow-up to previous {len(conversation_history)} messages)")
 
-        if conversation_history:
-            parts.append(f"(Follow-up to previous {len(conversation_history)} messages)")
+            answer = " ".join(parts)
+            suggestions = [
+                f"Explore deeper dependencies for {graph.edges[0].target}",
+                f"Review operational architecture in {top_chunk.source_name}",
+            ]
+            return SynthesisResult(
+                answer=answer,
+                follow_up_suggestions=suggestions,
+                needs_clarification=False,
+                match_type="complete",
+            )
 
-        return " ".join(parts)
+        # Case 2: PARTIAL MATCH (chunks without edges or edges without chunks)
+        if chunks:
+            top_chunk = chunks[0]
+            snippet = top_chunk.content[:180].strip().replace("\n", " ")
+            answer = (
+                f"Based on your organization's documentation, referencing \"{top_chunk.source_name}\": {snippet}. "
+                f"However, the records do not detail the relational graph dependencies for '{query}'. "
+                f"Which specific component or sub-aspect would you like to clarify?"
+            )
+            suggestions = [
+                f"Inspect documentation in {top_chunk.source_name}",
+                "Clarify specific architecture or subcomponent",
+            ]
+        else:
+            edge_strs = [f"{e.source} {e.type.lower().replace('_', ' ')} {e.target}" for e in graph.edges]
+            answer = (
+                f"Based on your organization's documentation, the knowledge graph confirms {', and '.join(edge_strs)}. "
+                f"However, the records do not detail textual documentation passages for '{query}'. "
+                f"Would you like to inspect the connected systems?"
+            )
+            suggestions = [
+                f"Explore neighborhood of {graph.edges[0].source}",
+                "Upload related documentation",
+            ]
+
+        return SynthesisResult(
+            answer=answer,
+            follow_up_suggestions=suggestions,
+            needs_clarification=True,
+            match_type="partial",
+        )
 
 
 class GeminiRAGSynthesizer(BaseRAGSynthesizer):
     """
-    Production synthesizer using Google Gemini (gemini-2.5-flash) with grounded prompt engineering.
+    Production synthesizer using Google Gemini with grounded prompt engineering
+    and structured JSON output conforming to SynthesisResult.
     """
 
     def __init__(self, api_key: str, model: str = "gemini-3.8-flash"):
@@ -127,37 +235,23 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
 
         self.client = genai.Client(api_key=api_key)
         self.model = model
+        self.mock_fallback = MockRAGSynthesizer()
 
     async def synthesize(
         self,
         query: str,
         chunks: List[SearchResult],
         graph: GraphNeighborhoodResponse,
+        candidate_concepts: Optional[List[str]] = None,
         temperature: float = 0.2,
         conversation_history: Optional[List[dict]] = None,
         persona_tone: Optional[str] = None,
         custom_system_prompt: Optional[str] = None,
-    ) -> str:
-        if not chunks and not graph.edges and not graph.nodes:
-            return "Based on your organization's knowledge base, there is insufficient information to answer this question."
+    ) -> SynthesisResult:
+        context_str = build_fusion_context(chunks, graph, candidate_concepts)
 
-        context_str = build_fusion_context(chunks, graph)
-
-        tone_directive = f"\n6. Persona & Tone: You MUST respond in a {persona_tone} tone." if persona_tone else ""
-        custom_directive = f"\n7. Specific Tenant Guidance: {custom_system_prompt}" if custom_system_prompt else ""
-
-        system_instruction = f"""
-        You are the AI Knowledge Engine for an enterprise organization.
-        Answer the user's question accurately and objectively using ONLY the provided verified context.
-
-        CRITICAL GROUNDING RULES:
-        1. Rely SOLELY on the provided Document Passages and Knowledge Graph Relationships.
-        2. If the context does not contain enough information to answer the question, respond:
-           "Based on your organization's knowledge base, there is insufficient information to answer this question."
-        3. Do NOT extrapolate, speculate, or fabricate details.
-        4. Synthesize across both text passages and graph relationships when answering.
-        5. When citing facts, mention the document name or the relationship triple.{tone_directive}{custom_directive}
-        """
+        tone_directive = f"\nAdopt the requested Persona at all times: {persona_tone}." if persona_tone else ""
+        custom_directive = f"\nTenant Custom Guidance: {custom_system_prompt}" if custom_system_prompt else ""
 
         history_section = ""
         if conversation_history:
@@ -166,28 +260,39 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
             history_section = f"\n\nRECENT CONVERSATION HISTORY:\n{formatted_turns}\n"
 
         prompt = f"""
-        {system_instruction}
+{GROUNDED_SYNTHESIS_SYSTEM_INSTRUCTION}
+{tone_directive}{custom_directive}
 
-        CONTEXT INFORMATION:
-        {context_str}
-        {history_section}
-        USER QUESTION:
-        {query}
+CONTEXT INFORMATION:
+{context_str}
+{history_section}
+USER QUESTION:
+{query}
 
-        SYNTHESIZED ANSWER:
-        """
+JSON RESPONSE:
+"""
 
         try:
             response = self.client.models.generate_content(
                 model=self.model,
                 contents=prompt,
-                config={"temperature": temperature}
+                config={
+                    "response_mime_type": "application/json",
+                    "temperature": temperature,
+                }
             )
-            return response.text.strip()
+            raw_json = response.text.strip()
+            data = json.loads(raw_json)
+            return SynthesisResult(
+                answer=data.get("answer", ""),
+                follow_up_suggestions=data.get("follow_up_suggestions", []),
+                needs_clarification=data.get("needs_clarification", False),
+                match_type=data.get("match_type", "complete"),
+            )
         except Exception as e:
             logger.exception(f"Gemini RAG synthesis failed: {e}. Falling back to mock synthesizer.")
-            return await MockRAGSynthesizer().synthesize(
-                query, chunks, graph, temperature, conversation_history, persona_tone, custom_system_prompt
+            return await self.mock_fallback.synthesize(
+                query, chunks, graph, candidate_concepts, temperature, conversation_history, persona_tone, custom_system_prompt
             )
 
 
@@ -235,14 +340,49 @@ class RAGPipelineService:
     ) -> RAGQueryResponse:
         start_time = time.perf_counter()
 
-        # Step 1: Query Analysis & Seed Entity Extraction
+        # Step 0: Conversational Routing & Intent Classification
+        router = get_conversational_router(api_key=gemini_api_key)
+        route_res = await router.route(query=query, conversation_history=conversation_history)
+
+        # Early exit for direct responses (greetings, closings, thanks) without retrieval overhead
+        if route_res.action == RouterAction.DIRECT_RESPONSE:
+            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            return RAGQueryResponse(
+                query=query,
+                answer=route_res.direct_or_clarification_message or "Hello! How can I help you today?",
+                action=route_res.action.value,
+                clarification_options=[],
+                standalone_query=None,
+                source_citations=[],
+                graph_citations=[],
+                entities_detected=[],
+                execution_time_ms=elapsed_ms,
+            )
+
+        # Early exit for ambiguous or underspecified queries requiring clarification
+        if route_res.action == RouterAction.CLARIFY:
+            elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            return RAGQueryResponse(
+                query=query,
+                answer=route_res.direct_or_clarification_message or "Could you please clarify your question?",
+                action=route_res.action.value,
+                clarification_options=route_res.clarification_options,
+                standalone_query=None,
+                source_citations=[],
+                graph_citations=[],
+                entities_detected=[],
+                execution_time_ms=elapsed_ms,
+            )
+
+        # Step 1: Query Analysis & Seed Entity Extraction (Action: RETRIEVE)
+        effective_query = route_res.standalone_query or query
         extractor = get_graph_extractor(api_key=gemini_api_key)
-        query_graph = await extractor.extract_graph(query)
-        detected_entities = [e.name for e in query_graph.entities]
+        query_graph = await extractor.extract_graph(effective_query)
+        detected_entities = list(dict.fromkeys(route_res.seed_entities + [e.name for e in query_graph.entities]))
 
         # Step 2: Track A - Semantic Vector Retrieval (pgvector)
         embedding_service = get_embedding_service(api_key=gemini_api_key)
-        query_vector = await embedding_service.embed_query(query)
+        query_vector = await embedding_service.embed_query(effective_query)
 
         chunks: List[SearchResult] = await search_similar_chunks(
             db=db,
@@ -255,6 +395,7 @@ class RAGPipelineService:
         # Step 3: Track B - Knowledge Graph Traversal (Neo4j)
         graph_store = await get_graph_store()
         graph_response = GraphNeighborhoodResponse()
+        candidate_concepts = []
         if detected_entities:
             graph_response = await graph_store.get_neighborhood(
                 tenant_id=tenant_id,
@@ -262,13 +403,26 @@ class RAGPipelineService:
                 max_hops=max_graph_hops,
                 limit=25
             )
+            candidate_concepts = [n.name for n in graph_response.nodes if n.name not in detected_entities]
+
+        # In zero-match or low-confidence cases, fetch tenant candidate concepts to bridge the knowledge gap
+        if not chunks and not graph_response.edges:
+            try:
+                if hasattr(graph_store, "get_all_entities"):
+                    all_ents = await graph_store.get_all_entities(tenant_id=tenant_id, limit=5)
+                    candidate_concepts.extend([e.name for e in all_ents if e.name not in candidate_concepts])
+                elif graph_response.nodes:
+                    candidate_concepts.extend([n.name for n in graph_response.nodes if n.name not in candidate_concepts])
+            except Exception:
+                pass
 
         # Step 4: Context Fusion & Grounded LLM Synthesis
         synthesizer = get_rag_synthesizer(api_key=gemini_api_key)
-        answer = await synthesizer.synthesize(
-            query=query,
+        synth_res = await synthesizer.synthesize(
+            query=effective_query,
             chunks=chunks,
             graph=graph_response,
+            candidate_concepts=candidate_concepts,
             temperature=temperature,
             conversation_history=conversation_history,
             persona_tone=persona_tone,
@@ -301,7 +455,12 @@ class RAGPipelineService:
 
         return RAGQueryResponse(
             query=query,
-            answer=answer,
+            answer=synth_res.answer,
+            action=route_res.action.value,
+            clarification_options=[],
+            standalone_query=route_res.standalone_query,
+            follow_up_suggestions=synth_res.follow_up_suggestions,
+            needs_clarification=synth_res.needs_clarification,
             source_citations=source_citations,
             graph_citations=graph_citations,
             entities_detected=detected_entities,

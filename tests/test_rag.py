@@ -72,7 +72,7 @@ async def test_mock_rag_synthesizer():
 
     # Empty
     empty_answer = await synthesizer.synthesize("Anything?", [], GraphNeighborhoodResponse())
-    assert "insufficient information" in empty_answer.lower()
+    assert "could not find records directly answering" in empty_answer.lower()
 
 
 @pytest.mark.asyncio
@@ -151,7 +151,7 @@ async def test_hybrid_rag_query_endpoint_and_cross_tenant_isolation(
     data_b = rag_res_b.json()
 
     # Tenant B has no access to Tenant A's documents or graph!
-    assert "insufficient information" in data_b["answer"].lower()
+    assert "could not find records directly answering" in data_b["answer"].lower()
     assert len(data_b["source_citations"]) == 0
     assert len(data_b["graph_citations"]) == 0
 

@@ -32,6 +32,11 @@ class RAGQueryResponse(BaseModel):
     """Grounded answer synthesized from hybrid vector and graph knowledge."""
     query: str
     answer: str
+    action: str = Field(default="retrieve", description="Routing action: 'direct_response', 'clarify', or 'retrieve'")
+    clarification_options: List[str] = Field(default_factory=list, description="Interactive choices if action is clarify")
+    standalone_query: Optional[str] = Field(default=None, description="Coreference-resolved standalone query")
+    follow_up_suggestions: List[str] = Field(default_factory=list, description="Forward-looking follow-up suggestions or related entity explorations")
+    needs_clarification: bool = Field(default=False, description="True if response is a partial match or zero match requiring clarification")
     source_citations: List[RAGSourceCitation] = Field(default_factory=list)
     graph_citations: List[RAGGraphCitation] = Field(default_factory=list)
     entities_detected: List[str] = Field(default_factory=list)

@@ -9,6 +9,10 @@ class ChatMessageRead(BaseModel):
     conversation_id: int
     role: str
     content: str
+    action: Optional[str] = Field(default=None, description="Router action: 'direct_response', 'clarify', or 'retrieve'")
+    clarification_options: List[str] = Field(default_factory=list, description="Interactive clarification choices if action is clarify")
+    follow_up_suggestions: List[str] = Field(default_factory=list, description="Forward-looking follow-up suggestions or related entity paths")
+    needs_clarification: bool = Field(default=False, description="True if response is a partial match or zero match requiring clarification")
     citations: Optional[Dict[str, Any]] = None
     created_at: datetime
 
@@ -17,9 +21,17 @@ class ChatMessageRead(BaseModel):
     @classmethod
     def from_orm_with_citations(cls, msg) -> "ChatMessageRead":
         c_dict = None
+        action = None
+        clarification_options = []
+        follow_up_suggestions = []
+        needs_clarification = False
         if msg.citations_json:
             try:
                 c_dict = json.loads(msg.citations_json)
+                action = c_dict.get("action")
+                clarification_options = c_dict.get("clarification_options", [])
+                follow_up_suggestions = c_dict.get("follow_up_suggestions", [])
+                needs_clarification = c_dict.get("needs_clarification", False)
             except Exception:
                 pass
         return cls(
@@ -27,6 +39,10 @@ class ChatMessageRead(BaseModel):
             conversation_id=msg.conversation_id,
             role=msg.role,
             content=msg.content,
+            action=action,
+            clarification_options=clarification_options,
+            follow_up_suggestions=follow_up_suggestions,
+            needs_clarification=needs_clarification,
             citations=c_dict,
             created_at=msg.created_at,
         )

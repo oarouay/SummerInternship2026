@@ -18,7 +18,10 @@ import {
   Check,
   Copy,
   ExternalLink,
-  CornerDownLeft
+  CornerDownLeft,
+  HelpCircle,
+  Compass,
+  ArrowRight
 } from 'lucide-react';
 
 export default function ChatStudio() {
@@ -118,14 +121,16 @@ export default function ChatStudio() {
     }
   };
 
-  const handleSendMessage = async (e) => {
+  const handleSendMessage = async (e, directText = null) => {
     e?.preventDefault();
-    if (!inputMessage.trim() || sending) return;
+    const userText = (typeof directText === 'string' ? directText : inputMessage).trim();
+    if (!userText || sending) return;
 
     let targetConvId = activeConvId;
     if (!targetConvId) {
       try {
-        const created = await chatApi.createConversation('New Session');
+        const titleSnippet = userText.length > 28 ? userText.slice(0, 25) + '...' : userText;
+        const created = await chatApi.createConversation(titleSnippet || 'New Session');
         targetConvId = created.id;
         setActiveConvId(created.id);
         await loadConversations();
@@ -135,8 +140,9 @@ export default function ChatStudio() {
       }
     }
 
-    const userText = inputMessage;
-    setInputMessage('');
+    if (!directText) {
+      setInputMessage('');
+    }
     setSending(true);
 
     const tempUserMsg = {
@@ -403,6 +409,12 @@ export default function ChatStudio() {
                 const citations = msg.citations;
                 const hasCitations = citations && (citations.sources?.length > 0 || citations.graph?.length > 0);
                 const citationState = citationStates[msg.id] || { isOpen: false, activeTab: 'sources' };
+                const clarificationOpts = msg.clarification_options?.length
+                  ? msg.clarification_options
+                  : (citations?.clarification_options || []);
+                const followUpOpts = msg.follow_up_suggestions?.length
+                  ? msg.follow_up_suggestions
+                  : (citations?.follow_up_suggestions || []);
 
                 return (
                   <div
@@ -455,6 +467,94 @@ export default function ChatStudio() {
                         >
                           {msg.content}
                         </div>
+
+                        {/* Clarification Options Chips */}
+                        {!isUser && clarificationOpts.length > 0 && (
+                          <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ fontSize: '11px', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
+                              <HelpCircle size={12} />
+                              <span>Select an option to clarify:</span>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              {clarificationOpts.map((opt, oIdx) => (
+                                <button
+                                  key={oIdx}
+                                  onClick={() => handleSendMessage(null, opt)}
+                                  className="btn-ghost"
+                                  style={{
+                                    fontSize: '11.5px',
+                                    padding: '5px 12px',
+                                    borderRadius: '16px',
+                                    background: 'var(--bg-surface-3)',
+                                    border: '1px solid var(--accent-primary)',
+                                    color: 'var(--accent-primary)',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s ease',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'var(--accent-primary)';
+                                    e.currentTarget.style.color = '#FFFFFF';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'var(--bg-surface-3)';
+                                    e.currentTarget.style.color = 'var(--accent-primary)';
+                                  }}
+                                >
+                                  <span>{opt}</span>
+                                  <ArrowRight size={11} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Follow-up Exploration Suggestions */}
+                        {!isUser && followUpOpts.length > 0 && (
+                          <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <Compass size={12} />
+                              <span>Explore further:</span>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                              {followUpOpts.map((sug, sIdx) => (
+                                <button
+                                  key={sIdx}
+                                  onClick={() => handleSendMessage(null, sug)}
+                                  className="btn-ghost"
+                                  style={{
+                                    fontSize: '11.5px',
+                                    padding: '5px 11px',
+                                    borderRadius: '16px',
+                                    background: 'var(--bg-surface-2)',
+                                    border: '1px solid var(--border-subtle)',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s ease',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.borderColor = 'var(--accent-primary)';
+                                    e.currentTarget.style.color = 'var(--text-primary)';
+                                    e.currentTarget.style.background = 'var(--bg-surface-3)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                                    e.currentTarget.style.color = 'var(--text-secondary)';
+                                    e.currentTarget.style.background = 'var(--bg-surface-2)';
+                                  }}
+                                >
+                                  <span>{sug}</span>
+                                  <ArrowRight size={10} style={{ opacity: 0.6 }} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Assistant Provenance & Dual Citations HUD */}
                         {!isUser && (

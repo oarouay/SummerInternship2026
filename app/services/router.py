@@ -1,0 +1,306 @@
+import json
+import logging
+import re
+import time
+from abc import ABC, abstractmethod
+from typing import List, Optional
+
+from app.core.config import settings
+from app.schemas.router import ConversationalRouteResult, RouterAction
+
+logger = logging.getLogger(__name__)
+
+ROUTING_SYSTEM_INSTRUCTION = """
+You are the Conversational Routing Engine for an enterprise knowledge and search platform.
+Your primary objective is to inspect the latest user message alongside the conversation history, resolve ambiguity and references, and determine the optimal execution path.
+
+Output strictly valid JSON conforming to the requested schema.
+
+### Core Responsibilities:
+
+1. INTENT CLASSIFICATION & ACTION SELECTION
+Assign exactly one value to "action":
+- "direct_response": The user is greeting, expressing gratitude, initiating chitchat, or requesting conversational closing (e.g., "Hi", "Thanks", "Goodbye"). Retrieval is unnecessary.
+- "clarify": The user's query is broad, critically underspecified, or ambiguous across multiple systems/topics (e.g., "How do I deploy?", "Show me the logs", "Fix the bug"). Rather than guessing or querying the database blindly, pause retrieval to ask a clarifying question.
+- "retrieve": The query contains sufficient domain specificity, or is a focused follow-up question that can be answered via document and graph retrieval.
+
+2. MULTI-TURN COREFERENCE RESOLUTION
+- When action is "retrieve", rewrite the user's latest message into "standalone_query".
+- Replace every pronoun ("it", "they", "that tool", "his project", "the previous version") and implicit context with explicit entity names derived from the conversation history.
+- Example: 
+  History: User: "Tell me about Project Titan." Assistant: "Project Titan is an auth service." User: "Is it secure?"
+  Standalone Query: "What security vulnerabilities or features exist for Project Titan?"
+- If action is NOT "retrieve", set "standalone_query" to null.
+
+3. SEED ENTITY EXTRACTION
+- When action is "retrieve", populate "seed_entities" with high-value domain nouns, system titles, code repos, technologies, people, or standards extracted from "standalone_query".
+- Normalize casing (Title Case for systems/people, UPPERCASE for acronyms). Do not extract stop words, verbs, or generic terms like "information", "details", or "user".
+
+4. CLARIFICATION & GUIDANCE OPTIONS
+- If action is "clarify":
+  * Write a concise, courteous message directly to the user in "direct_or_clarification_message" explaining the ambiguity and asking them to choose an area.
+  * Provide 2 to 4 brief, clickable choices in "clarification_options" (e.g., ["Production Web Deploy", "Staging Mobile Deploy", "CI/CD Pipeline"]).
+- If action is "direct_response":
+  * Populate "direct_or_clarification_message" with a polite, professional reply. Set "clarification_options" to an empty list.
+- If action is "retrieve":
+  * Set "direct_or_clarification_message" to null and "clarification_options" to an empty list.
+
+### Constraints:
+- Do not assume missing information. If a query could reasonably match multiple distinct tenant domains, prioritize "clarify".
+- Strictly avoid conversational preamble in the JSON. Output only structured data.
+"""
+
+
+class BaseConversationalRouter(ABC):
+    """Abstract base class for the Conversational Routing Engine."""
+
+    @abstractmethod
+    async def route(
+        self,
+        query: str,
+        conversation_history: Optional[List[dict]] = None
+    ) -> ConversationalRouteResult:
+        """Inspects query and conversation history to determine action and execution parameters."""
+        pass
+
+
+class MockConversationalRouter(BaseConversationalRouter):
+    """
+    Deterministic rule-based router for unit tests and local/offline execution.
+    Implements full intent classification, multi-turn coreference resolution,
+    seed entity extraction, and clarification choices without external API dependencies.
+    """
+
+    GREETING_PATTERNS = [
+        r"^\s*(hi|hello|hey|greetings|howdy|good\s+(morning|afternoon|evening))\b",
+        r"^\s*(thanks|thank\s+you|appreciate\s+it|thx)\b",
+        r"^\s*(bye|goodbye|see\s+you|farewell|have\s+a\s+good\s+day)\b",
+    ]
+
+    AMBIGUOUS_PATTERNS = [
+        r"\b(how\s+do\s+i\s+deploy|deploy|deployment)\b",
+        r"\b(show\s+me\s+the\s+logs|check\s+the\s+logs|logs)\b",
+        r"\b(fix\s+the\s+bug|there\s+is\s+a\s+bug|error\s+in\s+code)\b",
+        r"^\s*(help|support|assist\s+me)\s*$",
+    ]
+
+    COMMON_ACRONYMS = {"JWT", "CVE", "API", "SDK", "URL", "HTTP", "SSO", "REST", "SQL", "RBAC", "AWS", "GCP"}
+
+    STOPWORDS = {
+        "the", "a", "an", "this", "that", "these", "those", "what", "who", "user", "assistant",
+        "according", "based", "however", "therefore", "furthermore", "please", "hello",
+        "thanks", "with", "from", "for", "when", "where", "which", "why", "how", "and",
+        "or", "but", "yes", "no", "referencing", "verified",
+        "tell", "show", "give", "explain", "find", "describe", "is", "are", "was", "were",
+        "can", "could", "would", "will", "do", "does", "did", "me", "my", "about", "to", "in", "on"
+    }
+
+    async def route(
+        self,
+        query: str,
+        conversation_history: Optional[List[dict]] = None
+    ) -> ConversationalRouteResult:
+        start_time = time.perf_counter()
+        clean_q = query.strip()
+        lower_q = clean_q.lower()
+
+        # 1. Direct response check (greetings, thanks, closings)
+        for pattern in self.GREETING_PATTERNS:
+            if re.search(pattern, lower_q, re.IGNORECASE):
+                if any(k in lower_q for k in ["thanks", "thank", "appreciate", "thx"]):
+                    msg = "You are very welcome! Let me know if you need anything else from our knowledge base."
+                elif any(k in lower_q for k in ["bye", "goodbye", "farewell"]):
+                    msg = "Goodbye! Have a great day ahead."
+                else:
+                    msg = "Hello! How can I assist you with your organization's knowledge base today?"
+
+                elapsed = round((time.perf_counter() - start_time) * 1000, 2)
+                return ConversationalRouteResult(
+                    action=RouterAction.DIRECT_RESPONSE,
+                    standalone_query=None,
+                    seed_entities=[],
+                    direct_or_clarification_message=msg,
+                    clarification_options=[],
+                    execution_time_ms=elapsed,
+                )
+
+        # 2. Clarification check (broad or underspecified queries)
+        for pattern in self.AMBIGUOUS_PATTERNS:
+            if re.search(pattern, lower_q, re.IGNORECASE) and len(clean_q.split()) <= 6:
+                if "deploy" in lower_q:
+                    msg = "Which deployment environment or target are you referring to?"
+                    options = ["Production Web Deploy", "Staging Mobile Deploy", "CI/CD Pipeline"]
+                elif "log" in lower_q:
+                    msg = "Which service logs would you like to inspect?"
+                    options = ["API Gateway Logs", "Database Cluster Logs", "Auth Service Logs"]
+                elif "bug" in lower_q:
+                    msg = "Which system or component is experiencing this issue?"
+                    options = ["Frontend Web App", "Backend API Service", "Database Migration"]
+                else:
+                    msg = "Could you please specify which topic or system you'd like help with?"
+                    options = ["System Architecture", "Security & Auth", "Deployment Guide"]
+
+                elapsed = round((time.perf_counter() - start_time) * 1000, 2)
+                return ConversationalRouteResult(
+                    action=RouterAction.CLARIFY,
+                    standalone_query=None,
+                    seed_entities=[],
+                    direct_or_clarification_message=msg,
+                    clarification_options=options,
+                    execution_time_ms=elapsed,
+                )
+
+        # 3. Retrieve action: coreference resolution & seed entity extraction
+        standalone = clean_q
+        detected_entities = []
+
+        # Find entities in history to resolve pronouns, prioritizing user turns
+        history_entities = []
+        if conversation_history:
+            for turn in reversed(conversation_history):
+                if turn.get("role") == "user":
+                    content = turn.get("content", "")
+                    found = re.findall(r"\b[A-Z][a-zA-Z0-9_-]+(?:\s+[A-Z][a-zA-Z0-9_-]+)*\b", content)
+                    for f in found:
+                        if f.lower() not in self.STOPWORDS and f not in history_entities:
+                            history_entities.append(f)
+
+            for turn in reversed(conversation_history):
+                if turn.get("role") == "assistant":
+                    content = turn.get("content", "")
+                    found = re.findall(r"\b[A-Z][a-zA-Z0-9_-]+(?:\s+[A-Z][a-zA-Z0-9_-]+)*\b", content)
+                    for f in found:
+                        if f.lower() not in self.STOPWORDS and f not in history_entities:
+                            history_entities.append(f)
+
+        # Coreference replacement
+        pronoun_match = re.search(r"\b(it|they|that\s+tool|his\s+project|this\s+system)\b", lower_q)
+        if pronoun_match and history_entities:
+            target_entity = history_entities[0]
+            # Replace pronoun with primary entity
+            standalone = re.sub(
+                r"\b(it|they|that\s+tool|his\s+project|this\s+system)\b",
+                target_entity,
+                clean_q,
+                flags=re.IGNORECASE
+            )
+            detected_entities.append(target_entity)
+
+        # Extract high-value domain nouns / proper nouns from standalone query
+        matches = re.findall(r"\b[a-zA-Z0-9_-]+\b", standalone)
+        for word in matches:
+            upper_w = word.upper()
+            if upper_w in self.COMMON_ACRONYMS:
+                if upper_w not in detected_entities:
+                    detected_entities.append(upper_w)
+
+        cap_entities = re.findall(r"\b[A-Z][a-zA-Z0-9_-]+(?:\s+[A-Z][a-zA-Z0-9_-]+)*\b", standalone)
+        for ent in cap_entities:
+            ent_clean = ent.strip()
+            if ent_clean.lower() not in {"what", "who", "how", "why", "which", "where", "is", "does", "the", "tell"}:
+                if ent_clean not in detected_entities:
+                    detected_entities.append(ent_clean)
+
+        # Fallback check for known lowercase matches that should be Title Cased
+        for known in ["hydra auth", "project titan"]:
+            if known in standalone.lower():
+                titled = known.title()
+                if titled not in detected_entities:
+                    detected_entities.append(titled)
+
+        elapsed = round((time.perf_counter() - start_time) * 1000, 2)
+        return ConversationalRouteResult(
+            action=RouterAction.RETRIEVE,
+            standalone_query=standalone,
+            seed_entities=detected_entities,
+            direct_or_clarification_message=None,
+            clarification_options=[],
+            execution_time_ms=elapsed,
+        )
+
+
+class GeminiConversationalRouter(BaseConversationalRouter):
+    """
+    Production router leveraging Google Gemini with structured JSON output schema.
+    Applies the conversational routing prompt to resolve ambiguity, rewrite queries,
+    and extract seed entities.
+    """
+
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
+        from google import genai
+
+        self.client = genai.Client(api_key=api_key)
+        self.model = model
+        self.mock_fallback = MockConversationalRouter()
+
+    async def route(
+        self,
+        query: str,
+        conversation_history: Optional[List[dict]] = None
+    ) -> ConversationalRouteResult:
+        start_time = time.perf_counter()
+
+        history_str = "None"
+        if conversation_history:
+            recent_turns = conversation_history[-6:]
+            history_str = "\n".join([f"{msg.get('role', 'user').capitalize()}: {msg.get('content', '')}" for msg in recent_turns])
+
+        prompt = f"""
+{ROUTING_SYSTEM_INSTRUCTION}
+
+CONVERSATION HISTORY:
+{history_str}
+
+LATEST USER MESSAGE:
+{query}
+
+JSON RESPONSE:
+"""
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config={
+                    "response_mime_type": "application/json",
+                    "temperature": 0.0,
+                }
+            )
+            raw_json = response.text.strip()
+            data = json.loads(raw_json)
+
+            action_val = data.get("action", "retrieve")
+            try:
+                action_enum = RouterAction(action_val)
+            except ValueError:
+                action_enum = RouterAction.RETRIEVE
+
+            elapsed = round((time.perf_counter() - start_time) * 1000, 2)
+            return ConversationalRouteResult(
+                action=action_enum,
+                standalone_query=data.get("standalone_query") if action_enum == RouterAction.RETRIEVE else None,
+                seed_entities=data.get("seed_entities", []) if action_enum == RouterAction.RETRIEVE else [],
+                direct_or_clarification_message=data.get("direct_or_clarification_message"),
+                clarification_options=data.get("clarification_options", []) if action_enum == RouterAction.CLARIFY else [],
+                execution_time_ms=elapsed,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[ConversationalRouter] Gemini routing failed ({exc}). Falling back to rule-based router."
+            )
+            return await self.mock_fallback.route(query, conversation_history)
+
+
+def get_conversational_router(api_key: Optional[str] = None) -> BaseConversationalRouter:
+    """Factory returning GeminiConversationalRouter if API key is present, else MockConversationalRouter."""
+    effective_key = (api_key and api_key.strip()) or (settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
+    if effective_key:
+        try:
+            return GeminiConversationalRouter(
+                api_key=effective_key,
+                model=settings.LLM_MODEL
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize GeminiConversationalRouter ({e}). Using MockConversationalRouter.")
+            return MockConversationalRouter()
+
+    return MockConversationalRouter()
