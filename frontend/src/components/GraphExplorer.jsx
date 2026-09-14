@@ -6,7 +6,6 @@ import {
   Network as GraphIcon, 
   RefreshCw, 
   Search, 
-  Sliders, 
   ZoomIn, 
   ZoomOut, 
   Maximize2,
@@ -14,21 +13,24 @@ import {
   Sparkles,
   X,
   Layers,
-  Share2
+  Database,
+  ArrowRight
 } from 'lucide-react';
 
+// Calibrated, desaturated entity color palette (Anti-Slop compliant)
 const ENTITY_COLOR_MAP = {
-  PERSON: { background: '#8B5CF6', border: '#A78BFA' },
-  PROJECT: { background: '#5E6AD2', border: '#818CF8' },
-  SYSTEM: { background: '#5E6AD2', border: '#818CF8' },
-  TECHNOLOGY: { background: '#06B6D4', border: '#67E8F9' },
-  LANGUAGE: { background: '#06B6D4', border: '#67E8F9' },
-  ORGANIZATION: { background: '#10B981', border: '#34D399' },
-  COMPANY: { background: '#10B981', border: '#34D399' },
-  DEFAULT: { background: '#F59E0B', border: '#FBBF24' }
+  PERSON: { background: '#6366F1', border: '#818CF8' },
+  PROJECT: { background: '#4F5BAE', border: '#6E79E2' },
+  SYSTEM: { background: '#4F5BAE', border: '#6E79E2' },
+  TECHNOLOGY: { background: '#0891B2', border: '#22D3EE' },
+  LANGUAGE: { background: '#0891B2', border: '#22D3EE' },
+  ORGANIZATION: { background: '#059669', border: '#34D399' },
+  COMPANY: { background: '#059669', border: '#34D399' },
+  CONCEPT: { background: '#D97706', border: '#FBBF24' },
+  DEFAULT: { background: '#475569', border: '#94A3B8' }
 };
 
-export default function GraphExplorer() {
+export default function GraphExplorer({ onNavigateToSources }) {
   const containerRef = useRef(null);
   const networkRef = useRef(null);
 
@@ -40,6 +42,8 @@ export default function GraphExplorer() {
 
   const [selectedNode, setSelectedNode] = useState(null);
   const [connectedEdges, setConnectedEdges] = useState([]);
+  const [allNodesList, setAllNodesList] = useState([]);
+  const [allEdgesList, setAllEdgesList] = useState([]);
 
   const fetchStats = async () => {
     try {
@@ -57,7 +61,11 @@ export default function GraphExplorer() {
     setLoading(true);
     try {
       const data = await graphApi.getNeighborhood(seeds, maxHops, nodeLimit);
-      renderNetwork(data.nodes || [], data.edges || data.relationships || []);
+      const rawNodes = data.nodes || [];
+      const rawEdges = data.edges || data.relationships || [];
+      setAllNodesList(rawNodes);
+      setAllEdgesList(rawEdges);
+      renderNetwork(rawNodes, rawEdges);
     } catch (err) {
       console.error('Error loading graph neighborhood:', err);
     } finally {
@@ -86,7 +94,7 @@ export default function GraphExplorer() {
         },
         font: { color: '#F2F3F5', size: 11, face: 'Inter' },
         shape: 'dot',
-        size: 16,
+        size: 15,
         borderWidth: 1.5,
         properties: n.properties || {},
         entityLabel: labelType
@@ -100,7 +108,7 @@ export default function GraphExplorer() {
       label: e.type,
       arrows: 'to',
       color: {
-        color: 'rgba(255, 255, 255, 0.16)',
+        color: 'rgba(255, 255, 255, 0.14)',
         highlight: '#5E6AD2'
       },
       font: { color: '#94969D', size: 9, align: 'middle', background: 'rgba(8, 9, 10, 0.85)' },
@@ -116,13 +124,13 @@ export default function GraphExplorer() {
       physics: {
         solver: 'forceAtlas2Based',
         forceAtlas2Based: {
-          gravitationalConstant: -38,
+          gravitationalConstant: -36,
           centralGravity: 0.01,
-          springLength: 95,
+          springLength: 90,
           springConstant: 0.08,
-          damping: 0.4
+          damping: 0.45
         },
-        stabilization: { iterations: 120 }
+        stabilization: { iterations: 100 }
       },
       interaction: {
         hover: true,
@@ -164,6 +172,28 @@ export default function GraphExplorer() {
     loadGraph(seeds);
   };
 
+  const handleSelectNeighbor = (neighborName) => {
+    const found = allNodesList.find((n) => n.name === neighborName);
+    if (found) {
+      const labelType = (found.type || found.label || 'CONCEPT').toUpperCase();
+      const colors = ENTITY_COLOR_MAP[labelType] || ENTITY_COLOR_MAP.DEFAULT;
+      setSelectedNode({
+        id: found.name,
+        entityLabel: labelType,
+        color: colors,
+        properties: found.properties || {}
+      });
+      const related = allEdgesList.filter((e) => e.source === neighborName || e.target === neighborName);
+      setConnectedEdges(related);
+      if (networkRef.current) {
+        networkRef.current.focus(neighborName, { scale: 1.2, animation: true });
+      }
+    } else {
+      setSeedInput(neighborName);
+      loadGraph([neighborName]);
+    }
+  };
+
   const handleExpandFromSelected = () => {
     if (selectedNode) {
       setSeedInput(selectedNode.id);
@@ -172,12 +202,47 @@ export default function GraphExplorer() {
   };
 
   return (
-    <div style={{ position: 'relative', height: 'calc(100vh - 52px)', width: '100%', overflow: 'hidden', background: 'var(--bg-canvas)' }}>
-      {/* Full-Bleed Interactive Canvas */}
+    <div style={{ position: 'relative', height: 'calc(100vh - 54px)', width: '100%', overflow: 'hidden', background: 'var(--bg-canvas)' }}>
+      {/* Full-Bleed Interactive Vis-Network Canvas */}
       <div 
         ref={containerRef} 
         style={{ width: '100%', height: '100%', outline: 'none' }} 
       />
+
+      {/* Empty State Guided Overlay */}
+      {stats.node_count === 0 && !loading && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(8, 9, 10, 0.75)',
+          backdropFilter: 'blur(4px)',
+          zIndex: 10,
+          pointerEvents: 'auto'
+        }}>
+          <div className="glass-panel" style={{ padding: '36px', maxWidth: '440px', textAlign: 'center' }}>
+            <div className="empty-state-icon" style={{ margin: '0 auto 16px' }}>
+              <GraphIcon size={24} />
+            </div>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>Knowledge Graph Empty</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '12.5px', lineHeight: 1.6, marginBottom: '20px' }}>
+              Your graph will automatically populate as you ingest documents and web pages. Entities and relationships are extracted using Gemini.
+            </p>
+            {onNavigateToSources && (
+              <button 
+                onClick={onNavigateToSources}
+                className="btn btn-primary"
+                style={{ padding: '8px 18px', fontSize: '12.5px' }}
+              >
+                <Database size={14} />
+                <span>Ingest First Document</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Floating Top HUD Control Bar */}
       <div style={{
@@ -194,46 +259,44 @@ export default function GraphExplorer() {
         {/* Left: Seed Search Bar */}
         <form 
           onSubmit={handleSearchSubmit} 
-          className="hairline-card"
+          className="glass-panel"
           style={{
             pointerEvents: 'auto',
             display: 'flex',
             alignItems: 'center',
             gap: '8px',
             padding: '4px 8px 4px 12px',
-            background: 'var(--bg-surface-1)',
             boxShadow: 'var(--shadow-md)',
             borderRadius: '9px',
-            width: '380px'
+            width: '360px'
           }}
         >
           <Search size={14} color="var(--text-muted)" />
           <input
             type="text"
-            placeholder="Search seed entities (e.g. Neo4j, Python)..."
+            placeholder="Search entity node (e.g. Neo4j, FastAPI)..."
             value={seedInput}
             onChange={(e) => setSeedInput(e.target.value)}
             style={{
               border: 'none',
               background: 'transparent',
               fontSize: '12.5px',
-              padding: '4px 0',
+              padding: '5px 0',
               boxShadow: 'none'
             }}
           />
-          <button type="submit" disabled={loading} className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '11px', borderRadius: '5px' }}>
-            <span>Traverse</span>
+          <button type="submit" disabled={loading} className="btn btn-primary" style={{ padding: '4px 10px', fontSize: '11.5px', borderRadius: '6px' }}>
+            <span>Find</span>
           </button>
         </form>
 
-        {/* Right: Sliders & Telemetry Pill */}
+        {/* Right: Controls & Metrics */}
         <div style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div className="hairline-card" style={{
-            padding: '4px 12px',
+          <div className="glass-panel" style={{
+            padding: '5px 14px',
             display: 'flex',
             alignItems: 'center',
             gap: '14px',
-            background: 'var(--bg-surface-1)',
             boxShadow: 'var(--shadow-md)',
             borderRadius: '9px',
             fontSize: '12px'
@@ -246,7 +309,7 @@ export default function GraphExplorer() {
                 max={3}
                 value={maxHops}
                 onChange={(e) => setMaxHops(parseInt(e.target.value))}
-                style={{ width: '65px', cursor: 'pointer' }}
+                style={{ width: '60px', cursor: 'pointer' }}
               />
               <span className="tabular-nums" style={{ fontWeight: 600, color: 'var(--accent-primary)', fontSize: '11px' }}>{maxHops}</span>
             </div>
@@ -255,22 +318,22 @@ export default function GraphExplorer() {
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ color: 'var(--text-muted)' }}>Nodes:</span>
-              <span className="tabular-nums" style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '11px' }}>{stats.node_count}</span>
+              <span className="tabular-nums" style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '11.5px' }}>{stats.node_count}</span>
             </div>
 
             <div style={{ width: '1px', height: '14px', background: 'var(--border-hairline)' }}></div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ color: 'var(--text-muted)' }}>Edges:</span>
-              <span className="tabular-nums" style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '11px' }}>{stats.relationship_count}</span>
+              <span className="tabular-nums" style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '11.5px' }}>{stats.relationship_count}</span>
             </div>
           </div>
 
           <button 
             onClick={() => { fetchStats(); loadGraph([]); }}
             className="btn btn-secondary"
-            style={{ padding: '6px 10px', borderRadius: '8px', fontSize: '12px' }}
-            title="Reload graph"
+            style={{ padding: '7px 11px', borderRadius: '8px', fontSize: '12px' }}
+            title="Reload graph cluster"
           >
             <RefreshCw size={13} className={loading ? 'spin' : ''} />
           </button>
@@ -286,7 +349,7 @@ export default function GraphExplorer() {
         gap: '4px',
         zIndex: 20
       }}>
-        <div className="hairline-card" style={{ display: 'flex', background: 'var(--bg-surface-1)', padding: '2px', borderRadius: '7px' }}>
+        <div className="glass-panel" style={{ display: 'flex', padding: '2px', borderRadius: '8px' }}>
           <button 
             onClick={() => networkRef.current && networkRef.current.moveTo({ scale: networkRef.current.getScale() * 1.25 })}
             className="btn-ghost" 
@@ -314,7 +377,7 @@ export default function GraphExplorer() {
         </div>
       </div>
 
-      {/* Bottom Minimalist Legend */}
+      {/* Calibrated Entity Legend */}
       <div style={{
         position: 'absolute',
         bottom: '20px',
@@ -322,36 +385,40 @@ export default function GraphExplorer() {
         background: 'var(--bg-surface-1)',
         border: '1px solid var(--border-hairline)',
         borderRadius: '8px',
-        padding: '6px 12px',
+        padding: '6px 14px',
         display: 'flex',
-        gap: '12px',
+        gap: '14px',
         fontSize: '11px',
+        color: 'var(--text-secondary)',
         zIndex: 20
       }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#8B5CF6' }}></span> Person
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#6366F1' }}></span> Person
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#5E6AD2' }}></span> System / Project
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#4F5BAE' }}></span> Project / System
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#06B6D4' }}></span> Technology
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#0891B2' }}></span> Technology
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#10B981' }}></span> Organization
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#059669' }}></span> Organization
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#D97706' }}></span> Concept
         </span>
       </div>
 
-      {/* Right Slide-Over Property Inspector Drawer */}
+      {/* Right Slide-Over Entity Inspector Drawer */}
       {selectedNode && (
         <aside style={{
           position: 'absolute',
           top: 0,
           right: 0,
           bottom: 0,
-          width: '340px',
+          width: '360px',
           background: 'var(--bg-surface-1)',
-          borderLeft: '1px solid var(--border-hairline)',
+          borderLeft: '1px solid var(--border-subtle)',
           padding: '24px 20px',
           display: 'flex',
           flexDirection: 'column',
@@ -360,19 +427,19 @@ export default function GraphExplorer() {
           overflowY: 'auto'
         }}>
           {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
             <div>
-              <span className="eyebrow-tag" style={{ color: selectedNode.color.background, marginBottom: '6px' }}>
+              <span className="eyebrow-tag" style={{ color: selectedNode.color.border, marginBottom: '6px' }}>
                 {selectedNode.entityLabel}
               </span>
-              <h3 style={{ fontSize: '18px', fontWeight: 600, wordBreak: 'break-word' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 600, wordBreak: 'break-word', color: 'var(--text-primary)' }}>
                 {selectedNode.id}
               </h3>
             </div>
             <button 
               onClick={() => setSelectedNode(null)}
               className="btn-ghost"
-              style={{ padding: '4px', borderRadius: '5px' }}
+              style={{ padding: '5px', borderRadius: '6px' }}
             >
               <X size={16} />
             </button>
@@ -384,28 +451,43 @@ export default function GraphExplorer() {
             style={{ width: '100%', marginBottom: '20px', padding: '8px', fontSize: '12px' }}
           >
             <Sparkles size={14} />
-            <span>Traverse Connected Hops</span>
+            <span>Traverse 1-Hop Neighbors</span>
           </button>
 
           <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '10px' }}>
-            Connected Relationships ({connectedEdges.length})
+            Connected Neighborhood ({connectedEdges.length})
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, overflowY: 'auto' }}>
             {connectedEdges.length === 0 ? (
               <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No direct edges in current cluster view.</div>
             ) : (
               connectedEdges.map((edge, idx) => {
                 const isOutgoing = edge.source === selectedNode.id;
+                const neighborName = isOutgoing ? edge.target : edge.source;
                 return (
-                  <div key={idx} className="hairline-card" style={{ padding: '8px 10px', fontSize: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--text-muted)', fontSize: '10.5px', marginBottom: '2px' }}>
-                      <span>{isOutgoing ? 'OUTGOING' : 'INCOMING'}</span>
-                      <ChevronRight size={10} />
-                      <span style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>{edge.type}</span>
+                  <div 
+                    key={idx} 
+                    className="glass-panel" 
+                    onClick={() => handleSelectNeighbor(neighborName)}
+                    style={{ 
+                      padding: '10px 12px', 
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      transition: 'border-color 0.15s ease'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+                        {isOutgoing ? 'Points to' : 'Referenced by'}
+                      </span>
+                      <span style={{ color: 'var(--accent-primary)', fontWeight: 600, fontSize: '11px' }}>
+                        {edge.type}
+                      </span>
                     </div>
-                    <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
-                      {isOutgoing ? edge.target : edge.source}
+                    <div style={{ fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span>{neighborName}</span>
+                      <ArrowRight size={12} color="var(--text-muted)" />
                     </div>
                   </div>
                 );

@@ -9,7 +9,7 @@ import { authApi, getStoredToken } from './api/client';
 import { Sparkles, ShieldCheck, Database, Terminal } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('studio');
+  const [activeTab, setActiveTab] = useState('sources');
   const [tenant, setTenant] = useState(null);
   const [user, setUser] = useState(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -97,9 +97,9 @@ export default function App() {
           </div>
         ) : (
           <>
-            {activeTab === 'studio' && <ChatStudio />}
-            {activeTab === 'graph' && <GraphExplorer />}
             {activeTab === 'sources' && <SourceManager />}
+            {activeTab === 'graph' && <GraphExplorer onNavigateToSources={() => setActiveTab('sources')} />}
+            {activeTab === 'studio' && <ChatStudio />}
             {activeTab === 'settings' && <ChatbotSettings tenant={tenant} />}
           </>
         )}

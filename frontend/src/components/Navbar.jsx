@@ -23,23 +23,18 @@ export default function Navbar({
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   const tabs = [
-    { id: 'studio', label: 'RAG Studio', icon: Bot },
+    { id: 'sources', label: 'Knowledge Base', icon: Files },
     { id: 'graph', label: 'Knowledge Graph', icon: Network },
-    { id: 'sources', label: 'Document Base', icon: Files },
-    { id: 'settings', label: 'Persona & Widget', icon: SettingsIcon },
+    { id: 'studio', label: 'Chat Studio', icon: Bot },
+    { id: 'settings', label: 'Integration & Bot', icon: SettingsIcon },
   ];
-
-  const getTabLabel = () => {
-    const active = tabs.find(t => t.id === activeTab);
-    return active ? active.label : 'Studio';
-  };
 
   return (
     <header style={{ 
       background: 'var(--bg-surface-1)',
       borderBottom: '1px solid var(--border-hairline)',
-      padding: '0 20px',
-      height: '52px',
+      padding: '0 24px',
+      height: '54px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -47,52 +42,39 @@ export default function Navbar({
       top: 0,
       zIndex: 50
     }}>
-      {/* Left: Brand Monogram & Linear Breadcrumb */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {/* Monogram */}
+      {/* Left: Brand Identity & Tenant Context */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
         <div style={{ 
-          width: '28px', 
-          height: '28px', 
-          borderRadius: '7px', 
-          background: 'var(--bg-surface-3)',
-          border: '1px solid var(--border-subtle)',
+          width: '30px', 
+          height: '30px', 
+          borderRadius: '8px', 
+          background: 'linear-gradient(135deg, rgba(94, 106, 210, 0.2) 0%, rgba(94, 106, 210, 0.05) 100%)',
+          border: '1px solid rgba(94, 106, 210, 0.3)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--accent-primary)',
           fontWeight: 700,
-          fontSize: '11px',
-          letterSpacing: '-0.02em'
+          fontSize: '12px',
+          letterSpacing: '-0.02em',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
         }}>
           OG
         </div>
 
-        {/* Breadcrumb Trail */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
           <span style={{ fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
             OmniGraph
           </span>
           <span style={{ color: 'var(--text-muted)' }}>/</span>
           <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>
-            {tenant ? tenant.slug : 'workspace'}
-          </span>
-          <span style={{ color: 'var(--text-muted)' }}>/</span>
-          <span style={{ 
-            color: 'var(--text-primary)', 
-            fontWeight: 600,
-            background: 'var(--bg-surface-2)',
-            padding: '2px 8px',
-            borderRadius: '5px',
-            fontSize: '12px',
-            border: '1px solid var(--border-hairline)'
-          }}>
-            {getTabLabel()}
+            {tenant ? tenant.name : 'Workspace'}
           </span>
         </div>
       </div>
 
-      {/* Center: Minimalist Segmented Tabs */}
-      <nav className="segmented-control">
+      {/* Center: Purpose-Oriented Workflow Navigation */}
+      <nav className="segmented-control" style={{ padding: '4px' }}>
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -101,45 +83,37 @@ export default function Navbar({
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={isActive ? 'active' : ''}
+              style={{
+                padding: '6px 14px',
+                fontSize: '12.5px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '7px'
+              }}
             >
-              <Icon size={14} style={{ opacity: isActive ? 1 : 0.7 }} />
+              <Icon size={14} style={{ opacity: isActive ? 1 : 0.65 }} />
               <span>{tab.label}</span>
             </button>
           );
         })}
       </nav>
 
-      {/* Right: Telemetry Health Indicators & Profile */}
+      {/* Right: Consolidated System Status & Profile */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-        {/* Real-Time Telemetry Cluster */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11.5px', color: 'var(--text-muted)' }}>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '6px',
-            background: 'var(--bg-surface-2)',
-            border: '1px solid var(--border-hairline)',
-            padding: '3px 9px',
-            borderRadius: '16px'
-          }}>
-            <span className="telemetry-dot online"></span>
-            <span style={{ color: 'var(--text-secondary)' }}>pgvector</span>
-            <span className="tabular-nums" style={{ color: 'var(--text-muted)', fontSize: '10px' }}>768d</span>
-          </div>
-
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '6px',
-            background: 'var(--bg-surface-2)',
-            border: '1px solid var(--border-hairline)',
-            padding: '3px 9px',
-            borderRadius: '16px'
-          }}>
-            <span className="telemetry-dot online"></span>
-            <span style={{ color: 'var(--text-secondary)' }}>Neo4j</span>
-            <span className="tabular-nums" style={{ color: 'var(--text-muted)', fontSize: '10px' }}>5.26</span>
-          </div>
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '6px',
+          background: 'rgba(16, 185, 129, 0.08)',
+          border: '1px solid rgba(16, 185, 129, 0.2)',
+          padding: '4px 10px',
+          borderRadius: '16px',
+          fontSize: '11px',
+          color: '#34D399',
+          fontWeight: 500
+        }}>
+          <span className="telemetry-dot online" style={{ width: '6px', height: '6px' }}></span>
+          <span>Cluster Active</span>
         </div>
 
         {/* Tenant Profile Dropdown */}

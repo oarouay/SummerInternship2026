@@ -12,16 +12,13 @@ import {
   ChevronDown, 
   ChevronUp,
   Sliders,
-  Database,
-  Layers,
   Search,
   Check,
-  Copy,
-  ExternalLink,
   CornerDownLeft,
   HelpCircle,
   Compass,
-  ArrowRight
+  ArrowRight,
+  ShieldCheck
 } from 'lucide-react';
 
 export default function ChatStudio() {
@@ -34,12 +31,12 @@ export default function ChatStudio() {
   const [sending, setSending] = useState(false);
   const [botConfig, setBotConfig] = useState(null);
 
-  // Tuner popover
+  // Tuner state
   const [showTuner, setShowTuner] = useState(false);
   const [topK, setTopK] = useState(4);
   const [maxHops, setMaxHops] = useState(2);
 
-  // Citations Inspection HUD state: { [messageId]: { isOpen: boolean, activeTab: 'sources' | 'graph' } }
+  // Citations Inspection state: { [messageId]: { isOpen: boolean, activeTab: 'sources' | 'graph' } }
   const [citationStates, setCitationStates] = useState({});
 
   const messagesEndRef = useRef(null);
@@ -93,7 +90,7 @@ export default function ChatStudio() {
 
   const handleNewConversation = async () => {
     try {
-      const created = await chatApi.createConversation('New Session');
+      const created = await chatApi.createConversation('New Exploration');
       await loadConversations();
       selectConversation(created.id);
     } catch (err) {
@@ -130,7 +127,7 @@ export default function ChatStudio() {
     if (!targetConvId) {
       try {
         const titleSnippet = userText.length > 28 ? userText.slice(0, 25) + '...' : userText;
-        const created = await chatApi.createConversation(titleSnippet || 'New Session');
+        const created = await chatApi.createConversation(titleSnippet || 'New Exploration');
         targetConvId = created.id;
         setActiveConvId(created.id);
         await loadConversations();
@@ -186,42 +183,36 @@ export default function ChatStudio() {
   );
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 52px)', overflow: 'hidden', background: 'var(--bg-canvas)' }}>
-      {/* 1. Left Sidebar: Linear Session Drawer */}
+    <div style={{ display: 'flex', height: 'calc(100vh - 54px)', overflow: 'hidden', background: 'var(--bg-canvas)' }}>
+      {/* 1. Left Sidebar: Session Management */}
       <aside style={{
-        width: '260px',
+        width: '270px',
         borderRight: '1px solid var(--border-hairline)',
         background: 'var(--bg-surface-1)',
         display: 'flex',
         flexDirection: 'column',
         flexShrink: 0
       }}>
-        {/* Session Actions & Search */}
-        <div style={{ padding: '14px 14px 10px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {/* New Session Button & Search */}
+        <div style={{ padding: '16px 14px 10px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <button
             onClick={handleNewConversation}
             className="btn btn-primary"
-            style={{ width: '100%', justifyContent: 'space-between', padding: '8px 12px', fontSize: '12px' }}
+            style={{ width: '100%', justifyContent: 'center', padding: '8px 12px', fontSize: '12.5px' }}
           >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Plus size={14} />
-              <span>New Session</span>
-            </span>
-            <span className="tabular-nums" style={{ fontSize: '10px', opacity: 0.75, background: 'rgba(255,255,255,0.15)', padding: '1px 5px', borderRadius: '4px' }}>
-              ⌘N
-            </span>
+            <Plus size={14} />
+            <span>New Chat Session</span>
           </button>
 
-          {/* Minimal Search Input */}
           <div style={{ position: 'relative' }}>
             <Search size={13} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '9px' }} />
             <input
               type="text"
-              placeholder="Search sessions..."
+              placeholder="Search conversations..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
-                padding: '6px 10px 6px 28px',
+                padding: '6px 10px 6px 30px',
                 fontSize: '12px',
                 background: 'var(--bg-surface-2)',
                 borderRadius: '6px'
@@ -237,7 +228,7 @@ export default function ChatStudio() {
           </div>
 
           {filteredConversations.length === 0 ? (
-            <div style={{ padding: '20px 10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+            <div style={{ padding: '24px 10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
               No sessions found
             </div>
           ) : (
@@ -249,15 +240,14 @@ export default function ChatStudio() {
                   onClick={() => selectConversation(conv.id)}
                   style={{
                     padding: '8px 10px',
-                    borderRadius: '6px',
+                    borderRadius: '7px',
                     cursor: 'pointer',
                     background: isCurrent ? 'var(--bg-surface-3)' : 'transparent',
                     border: `1px solid ${isCurrent ? 'var(--border-subtle)' : 'transparent'}`,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    transition: 'all 0.15s ease',
-                    group: 'session-row'
+                    transition: 'all 0.15s ease'
                   }}
                 >
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: '6px' }}>
@@ -269,14 +259,14 @@ export default function ChatStudio() {
                       {conv.title}
                     </div>
                     <div className="tabular-nums" style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '1px' }}>
-                      {conv.message_count} turns · {new Date(conv.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      {conv.message_count} messages · {new Date(conv.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                     </div>
                   </div>
 
                   <button
                     onClick={(e) => handleDeleteConversation(e, conv.id)}
                     className="btn-ghost"
-                    style={{ padding: '4px', borderRadius: '4px', opacity: isCurrent ? 0.8 : 0.3 }}
+                    style={{ padding: '4px', borderRadius: '4px', opacity: isCurrent ? 0.8 : 0.25 }}
                     title="Delete session"
                   >
                     <Trash2 size={12} />
@@ -288,21 +278,21 @@ export default function ChatStudio() {
         </div>
       </aside>
 
-      {/* 2. Main Workspace: Chat Stream & Inspection HUD */}
+      {/* 2. Main Workspace: Chat Stream & Interactive Disambiguation Canvas */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
-        {/* Stream Header */}
+        {/* Stream Header & Hyperparameter Tuning */}
         <div style={{
-          height: '42px',
+          height: '44px',
           borderBottom: '1px solid var(--border-hairline)',
           background: 'var(--bg-surface-1)',
-          padding: '0 20px',
+          padding: '0 24px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           fontSize: '12px'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ color: 'var(--text-secondary)' }}>Persona:</span>
+            <span style={{ color: 'var(--text-muted)' }}>Persona:</span>
             <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{botConfig?.name || 'OmniGraph Assistant'}</span>
             <span className="eyebrow-tag" style={{ fontSize: '9.5px', padding: '1px 6px' }}>
               {botConfig?.tone || 'professional'}
@@ -313,38 +303,38 @@ export default function ChatStudio() {
             <button
               onClick={() => setShowTuner(!showTuner)}
               className="btn btn-secondary"
-              style={{ padding: '3px 9px', fontSize: '11.5px', borderRadius: '6px', gap: '5px' }}
+              style={{ padding: '4px 10px', fontSize: '11.5px', borderRadius: '6px', gap: '6px' }}
             >
               <Sliders size={12} />
-              <span>Tuning</span>
-              <span className="tabular-nums" style={{ color: 'var(--accent-primary)', fontSize: '10.5px' }}>
+              <span>RAG Parameters:</span>
+              <span className="tabular-nums" style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>
                 K={topK} H={maxHops}
               </span>
             </button>
 
-            {/* Tuning Popover HUD */}
+            {/* Tuning Popover */}
             {showTuner && (
               <div 
-                className="hairline-card"
+                className="glass-panel"
                 style={{
                   position: 'absolute',
                   right: 0,
-                  top: '120%',
-                  width: '260px',
-                  padding: '14px',
+                  top: '125%',
+                  width: '270px',
+                  padding: '16px',
                   boxShadow: 'var(--shadow-lg)',
                   zIndex: 80,
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '12px'
+                  gap: '14px'
                 }}
               >
-                <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                  Retrieval Hyperparameters
+                <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+                  Retrieval Tuning
                 </div>
 
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '5px' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>Vector Top-K Chunks:</span>
                     <strong className="tabular-nums" style={{ color: 'var(--accent-primary)' }}>{topK}</strong>
                   </div>
@@ -359,7 +349,7 @@ export default function ChatStudio() {
                 </div>
 
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '4px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '5px' }}>
                     <span style={{ color: 'var(--text-secondary)' }}>Graph Max Hops:</span>
                     <strong className="tabular-nums" style={{ color: 'var(--accent-cyan)' }}>{maxHops}</strong>
                   </div>
@@ -378,29 +368,18 @@ export default function ChatStudio() {
         </div>
 
         {/* Message Feed Area */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '28px 20px 100px 20px' }}>
-          <div style={{ maxWidth: '820px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '28px 24px 100px 24px' }}>
+          <div style={{ maxWidth: '840px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '22px' }}>
             {messages.length === 0 ? (
-              <div style={{ textAlign: 'center', margin: '80px auto', maxWidth: '460px' }}>
-                <div style={{
-                  width: '40px',
-                  height: '40px',
-                  borderRadius: '10px',
-                  background: 'var(--bg-surface-2)',
-                  border: '1px solid var(--border-subtle)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--accent-primary)',
-                  marginBottom: '16px'
-                }}>
-                  <Sparkles size={20} />
+              <div className="empty-state-box" style={{ margin: '80px auto' }}>
+                <div className="empty-state-icon">
+                  <Sparkles size={22} />
                 </div>
-                <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>
-                  {botConfig?.welcome_message || 'Welcome to your GraphRAG Assistant'}
+                <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px', color: 'var(--text-primary)' }}>
+                  {botConfig?.welcome_message || 'Welcome to OmniGraph Studio'}
                 </h3>
-                <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-                  Grounded queries combine PostgreSQL vector similarity matching with Neo4j relational graph traversals.
+                <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: '50ch' }}>
+                  Ask any question across your indexed documents. Answers are grounded in pgvector similarity and verified Neo4j graph triples.
                 </p>
               </div>
             ) : (
@@ -426,7 +405,7 @@ export default function ChatStudio() {
                       width: '100%'
                     }}
                   >
-                    {/* Message Bubble Container */}
+                    {/* Message Bubble */}
                     <div style={{
                       display: 'flex',
                       gap: '12px',
@@ -435,9 +414,9 @@ export default function ChatStudio() {
                     }}>
                       {!isUser && (
                         <div style={{
-                          width: '26px',
-                          height: '26px',
-                          borderRadius: '7px',
+                          width: '28px',
+                          height: '28px',
+                          borderRadius: '8px',
                           background: 'var(--bg-surface-3)',
                           border: '1px solid var(--border-hairline)',
                           display: 'flex',
@@ -454,7 +433,7 @@ export default function ChatStudio() {
                       <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
                         <div
                           style={{
-                            padding: isUser ? '10px 14px' : '0 4px',
+                            padding: isUser ? '10px 14px' : '0 2px',
                             borderRadius: isUser ? '10px' : '0',
                             background: isUser ? 'var(--bg-surface-3)' : 'transparent',
                             border: isUser ? '1px solid var(--border-subtle)' : 'none',
@@ -468,43 +447,22 @@ export default function ChatStudio() {
                           {msg.content}
                         </div>
 
-                        {/* Clarification Options Chips */}
+                        {/* Interactive Graph Disambiguation Chips */}
                         {!isUser && clarificationOpts.length > 0 && (
-                          <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            <div style={{ fontSize: '11px', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
-                              <HelpCircle size={12} />
-                              <span>Select an option to clarify:</span>
+                          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ fontSize: '11px', color: 'var(--accent-primary)', display: 'flex', alignItems: 'center', gap: '5px', fontWeight: 600 }}>
+                              <HelpCircle size={13} />
+                              <span>Clarify Concept (Graph Disambiguation):</span>
                             </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                               {clarificationOpts.map((opt, oIdx) => (
                                 <button
                                   key={oIdx}
                                   onClick={() => handleSendMessage(null, opt)}
-                                  className="btn-ghost"
-                                  style={{
-                                    fontSize: '11.5px',
-                                    padding: '5px 12px',
-                                    borderRadius: '16px',
-                                    background: 'var(--bg-surface-3)',
-                                    border: '1px solid var(--accent-primary)',
-                                    color: 'var(--accent-primary)',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.15s ease',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '5px'
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    e.currentTarget.style.background = 'var(--accent-primary)';
-                                    e.currentTarget.style.color = '#FFFFFF';
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.background = 'var(--bg-surface-3)';
-                                    e.currentTarget.style.color = 'var(--accent-primary)';
-                                  }}
+                                  className="disambiguation-chip"
                                 >
                                   <span>{opt}</span>
-                                  <ArrowRight size={11} />
+                                  <ArrowRight size={11} className="chip-arrow" />
                                 </button>
                               ))}
                             </div>
@@ -516,36 +474,19 @@ export default function ChatStudio() {
                           <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                             <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <Compass size={12} />
-                              <span>Explore further:</span>
+                              <span>Related Inquiries:</span>
                             </div>
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                               {followUpOpts.map((sug, sIdx) => (
                                 <button
                                   key={sIdx}
                                   onClick={() => handleSendMessage(null, sug)}
-                                  className="btn-ghost"
+                                  className="btn btn-secondary"
                                   style={{
                                     fontSize: '11.5px',
-                                    padding: '5px 11px',
+                                    padding: '4px 10px',
                                     borderRadius: '16px',
-                                    background: 'var(--bg-surface-2)',
-                                    border: '1px solid var(--border-subtle)',
-                                    color: 'var(--text-secondary)',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.15s ease',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '5px'
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    e.currentTarget.style.borderColor = 'var(--accent-primary)';
-                                    e.currentTarget.style.color = 'var(--text-primary)';
-                                    e.currentTarget.style.background = 'var(--bg-surface-3)';
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.borderColor = 'var(--border-subtle)';
-                                    e.currentTarget.style.color = 'var(--text-secondary)';
-                                    e.currentTarget.style.background = 'var(--bg-surface-2)';
+                                    color: 'var(--text-secondary)'
                                   }}
                                 >
                                   <span>{sug}</span>
@@ -556,12 +497,12 @@ export default function ChatStudio() {
                           </div>
                         )}
 
-                        {/* Assistant Provenance & Dual Citations HUD */}
+                        {/* Dual Provenance Citations HUD */}
                         {!isUser && (
                           <div style={{ marginTop: '10px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '11px' }}>
                               {citations?.execution_time_ms && (
-                                <span className="tabular-nums" style={{ color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                <span className="tabular-nums" style={{ color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                                   <Clock size={11} />
                                   <span>{citations.execution_time_ms.toFixed(0)}ms</span>
                                 </span>
@@ -571,47 +512,45 @@ export default function ChatStudio() {
                                 <button
                                   onClick={() => toggleCitationDrawer(msg.id)}
                                   className="btn btn-secondary"
-                                  style={{ padding: '2px 8px', fontSize: '11px', borderRadius: '5px', gap: '5px' }}
+                                  style={{ padding: '3px 9px', fontSize: '11px', borderRadius: '6px', gap: '6px' }}
                                 >
-                                  <span>Dual Provenance</span>
+                                  <span>Verified Citations</span>
                                   <span className="tabular-nums" style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>
-                                    {citations.sources?.length || 0} chunks · {citations.graph?.length || 0} relations
+                                    {citations.sources?.length || 0} passages · {citations.graph?.length || 0} triples
                                   </span>
                                   {citationState.isOpen ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
                                 </button>
                               )}
                             </div>
 
-                            {/* Inspection HUD Panel */}
+                            {/* Inspection HUD Drawer */}
                             {hasCitations && citationState.isOpen && (
                               <div 
-                                className="hairline-card" 
+                                className="glass-panel" 
                                 style={{
                                   marginTop: '10px',
                                   padding: '14px',
-                                  borderRadius: '10px',
-                                  background: 'var(--bg-surface-2)',
                                   display: 'flex',
                                   flexDirection: 'column',
                                   gap: '12px'
                                 }}
                               >
                                 {/* Segmented Tab Bar inside HUD */}
-                                <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-hairline)', paddingBottom: '8px' }}>
+                                <div style={{ display: 'flex', gap: '6px', borderBottom: '1px solid var(--border-hairline)', paddingBottom: '8px' }}>
                                   <button
                                     onClick={() => setCitationTab(msg.id, 'sources')}
                                     className="btn-ghost"
                                     style={{
                                       fontSize: '11.5px',
-                                      padding: '3px 8px',
-                                      borderRadius: '4px',
+                                      padding: '4px 10px',
+                                      borderRadius: '5px',
                                       fontWeight: citationState.activeTab === 'sources' ? 600 : 400,
                                       color: citationState.activeTab === 'sources' ? 'var(--text-primary)' : 'var(--text-muted)',
                                       background: citationState.activeTab === 'sources' ? 'var(--bg-surface-3)' : 'transparent',
                                     }}
                                   >
                                     <FileText size={12} />
-                                    <span>Document Chunks ({citations.sources?.length || 0})</span>
+                                    <span>Passages ({citations.sources?.length || 0})</span>
                                   </button>
 
                                   <button
@@ -619,24 +558,24 @@ export default function ChatStudio() {
                                     className="btn-ghost"
                                     style={{
                                       fontSize: '11.5px',
-                                      padding: '3px 8px',
-                                      borderRadius: '4px',
+                                      padding: '4px 10px',
+                                      borderRadius: '5px',
                                       fontWeight: citationState.activeTab === 'graph' ? 600 : 400,
                                       color: citationState.activeTab === 'graph' ? 'var(--text-primary)' : 'var(--text-muted)',
                                       background: citationState.activeTab === 'graph' ? 'var(--bg-surface-3)' : 'transparent',
                                     }}
                                   >
                                     <Network size={12} />
-                                    <span>Knowledge Graph ({citations.graph?.length || 0})</span>
+                                    <span>Graph Triples ({citations.graph?.length || 0})</span>
                                   </button>
                                 </div>
 
-                                {/* Content Tab 1: pgvector Chunks */}
+                                {/* Tab 1: Vector Passages */}
                                 {citationState.activeTab === 'sources' && (
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                     {citations.sources.map((src, sIdx) => (
                                       <div key={sIdx} style={{
-                                        background: 'var(--bg-surface-1)',
+                                        background: 'var(--bg-surface-2)',
                                         border: '1px solid var(--border-hairline)',
                                         borderRadius: '7px',
                                         padding: '10px 12px'
@@ -654,10 +593,10 @@ export default function ChatStudio() {
                                             padding: '1px 6px',
                                             borderRadius: '4px'
                                           }}>
-                                            {(src.similarity_score * 100).toFixed(1)}% match
+                                            {(src.similarity_score * 100).toFixed(1)}% relevance
                                           </div>
                                         </div>
-                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, fontFamily: 'var(--font-mono)' }}>
+                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.55, fontFamily: 'var(--font-mono)' }}>
                                           "{src.snippet}"
                                         </div>
                                       </div>
@@ -665,18 +604,20 @@ export default function ChatStudio() {
                                   </div>
                                 )}
 
-                                {/* Content Tab 2: Neo4j Graph Relational Triples */}
+                                {/* Tab 2: Neo4j Graph Relational Triples */}
                                 {citationState.activeTab === 'graph' && (
-                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                                     {citations.graph.length === 0 ? (
-                                      <div style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>No direct relational triples traversed for this query.</div>
+                                      <div style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>
+                                        No direct relational triples traversed for this query.
+                                      </div>
                                     ) : (
                                       citations.graph.map((rel, rIdx) => (
                                         <div key={rIdx} style={{
-                                          background: 'var(--bg-surface-1)',
+                                          background: 'var(--bg-surface-2)',
                                           border: '1px solid var(--border-hairline)',
                                           borderRadius: '6px',
-                                          padding: '5px 9px',
+                                          padding: '6px 10px',
                                           fontSize: '11.5px',
                                           display: 'flex',
                                           alignItems: 'center',
@@ -706,7 +647,7 @@ export default function ChatStudio() {
             {sending && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
                 <span className="telemetry-dot online"></span>
-                <span>Synthesizing hybrid context via pgvector & Neo4j...</span>
+                <span>Fusing vector passages and graph triples...</span>
               </div>
             )}
 
@@ -720,26 +661,25 @@ export default function ChatStudio() {
           bottom: 0,
           left: 0,
           right: 0,
-          padding: '16px 20px',
-          background: 'linear-gradient(180deg, transparent 0%, var(--bg-canvas) 40%)'
+          padding: '16px 24px',
+          background: 'linear-gradient(180deg, transparent 0%, var(--bg-canvas) 45%)'
         }}>
           <form 
             onSubmit={handleSendMessage}
-            className="hairline-card"
+            className="glass-panel"
             style={{
-              maxWidth: '820px',
+              maxWidth: '840px',
               margin: '0 auto',
-              padding: '6px 8px 6px 14px',
+              padding: '6px 10px 6px 16px',
               display: 'flex',
               alignItems: 'center',
               gap: '10px',
-              background: 'var(--bg-surface-2)',
               boxShadow: 'var(--shadow-md)'
             }}
           >
             <input
               type="text"
-              placeholder="Ask a question grounded in vector embeddings & graph knowledge..."
+              placeholder="Ask a question grounded in vector embeddings & graph relationships..."
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               disabled={sending}
@@ -761,7 +701,7 @@ export default function ChatStudio() {
                 type="submit" 
                 disabled={sending || !inputMessage.trim()}
                 className="btn btn-primary"
-                style={{ padding: '6px 12px', borderRadius: '6px' }}
+                style={{ padding: '7px 14px', borderRadius: '7px' }}
               >
                 <span>Send</span>
               </button>

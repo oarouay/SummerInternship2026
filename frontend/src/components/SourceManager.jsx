@@ -7,21 +7,21 @@ import {
   RefreshCw, 
   Trash2, 
   Eye, 
-  Search, 
   AlertCircle, 
   CheckCircle2, 
   Clock, 
   X,
-  FileCode,
+  Database,
   Layers,
-  ArrowUpRight,
-  ShieldCheck
+  ShieldCheck,
+  FileCode,
+  FileSpreadsheet
 } from 'lucide-react';
 
 export default function SourceManager() {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('upload'); // 'upload', 'crawl', 'raw', 'search'
+  const [activeTab, setActiveTab] = useState('upload'); // 'upload', 'crawl', 'raw'
   const [feedback, setFeedback] = useState(null);
 
   // Form states
@@ -32,16 +32,10 @@ export default function SourceManager() {
   const [rawContent, setRawContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Chunk Inspector state
+  // Slide-over Chunk Inspector state
   const [inspectSource, setInspectSource] = useState(null);
   const [chunks, setChunks] = useState([]);
   const [loadingChunks, setLoadingChunks] = useState(false);
-
-  // Semantic Search state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchTopK, setSearchTopK] = useState(4);
-  const [searchResults, setSearchResults] = useState([]);
-  const [searching, setSearching] = useState(false);
 
   const fetchSources = async () => {
     setLoading(true);
@@ -69,7 +63,7 @@ export default function SourceManager() {
     try {
       await sourcesApi.uploadFile(selectedFile);
       setSelectedFile(null);
-      setFeedback({ type: 'success', text: `Document "${selectedFile.name}" enqueued for ingestion.` });
+      setFeedback({ type: 'success', text: `Document "${selectedFile.name}" enqueued for ingestion and graph extraction.` });
       await fetchSources();
     } catch (err) {
       setFeedback({ type: 'error', text: err.message || 'File upload failed.' });
@@ -87,7 +81,7 @@ export default function SourceManager() {
       await sourcesApi.crawlUrl(crawlUrl, crawlName);
       setCrawlUrl('');
       setCrawlName('');
-      setFeedback({ type: 'success', text: `Webpage URL enqueued and protected by SSRF validation.` });
+      setFeedback({ type: 'success', text: `Webpage URL enqueued and verified through SSRF safety validation.` });
       await fetchSources();
     } catch (err) {
       setFeedback({ type: 'error', text: err.message || 'URL crawl failed.' });
@@ -105,7 +99,7 @@ export default function SourceManager() {
       await sourcesApi.createRawText(rawTitle, rawContent);
       setRawTitle('');
       setRawContent('');
-      setFeedback({ type: 'success', text: `Raw snippet indexed successfully.` });
+      setFeedback({ type: 'success', text: `Knowledge passage indexed successfully.` });
       await fetchSources();
     } catch (err) {
       setFeedback({ type: 'error', text: err.message || 'Text ingestion failed.' });
@@ -130,6 +124,7 @@ export default function SourceManager() {
   const handleReprocess = async (sourceId) => {
     try {
       await sourcesApi.reprocess(sourceId);
+      setFeedback({ type: 'success', text: 'Document re-indexing triggered.' });
       await fetchSources();
     } catch (err) {
       alert('Reprocess error: ' + err.message);
@@ -137,7 +132,7 @@ export default function SourceManager() {
   };
 
   const handleDelete = async (sourceId) => {
-    if (!confirm('Permanently delete this document and remove all its pgvector embeddings?')) return;
+    if (!confirm('Permanently delete this document and remove all vector embeddings and graph links?')) return;
     try {
       await sourcesApi.delete(sourceId);
       if (inspectSource && inspectSource.id === sourceId) {
@@ -149,110 +144,114 @@ export default function SourceManager() {
     }
   };
 
-  const handleSemanticSearch = async (e) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-    setSearching(true);
-    try {
-      const res = await sourcesApi.search(searchQuery, searchTopK);
-      setSearchResults(res);
-    } catch (err) {
-      alert('Search failed: ' + err.message);
-    } finally {
-      setSearching(false);
-    }
+  const getSourceIcon = (type, name) => {
+    if (type === 'url') return <Globe size={15} color="var(--accent-cyan)" />;
+    if (type === 'raw_text') return <FileCode size={15} color="var(--accent-amber)" />;
+    if (name?.endsWith('.csv')) return <FileSpreadsheet size={15} color="var(--accent-emerald)" />;
+    return <FileText size={15} color="var(--accent-primary)" />;
   };
 
   const renderStatus = (status, errorMsg) => {
-    if (status === 'completed') {
+    if (status === 'completed' || status === 'indexed') {
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: 'var(--accent-emerald)', fontSize: '12px' }}>
-          <span className="telemetry-dot online"></span>
+        <span className="status-pill indexed">
+          <span className="telemetry-dot online" style={{ width: '5px', height: '5px' }}></span>
           <span>Indexed</span>
         </span>
       );
     }
     if (status === 'processing') {
       return (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: 'var(--accent-amber)', fontSize: '12px' }}>
-          <Clock size={12} className="spin" />
+        <span className="status-pill processing">
+          <Clock size={11} className="spin" />
           <span>Processing</span>
         </span>
       );
     }
     if (status === 'failed') {
       return (
-        <span title={errorMsg || 'Failed'} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: 'var(--accent-rose)', fontSize: '12px', cursor: 'help' }}>
-          <AlertCircle size={12} />
+        <span className="status-pill failed" title={errorMsg || 'Failed to index'}>
+          <AlertCircle size={11} />
           <span>Failed</span>
         </span>
       );
     }
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: 'var(--text-muted)', fontSize: '12px' }}>
-        <Clock size={12} />
+      <span className="status-pill" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+        <Clock size={11} />
         <span>Pending</span>
       </span>
     );
   };
 
   return (
-    <div style={{ padding: '28px 36px', maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
-      {/* Title & Actions */}
-      <div style={{ marginBottom: '28px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+    <div className="workspace-page">
+      {/* Workspace Header */}
+      <div className="workspace-header">
         <div>
-          <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Document Base & Ingestion</h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-            Manage tenant-isolated knowledge files, scrape public URLs with SSRF protection, and inspect semantic embeddings.
+          <h1 className="workspace-title">
+            <Database size={20} color="var(--accent-primary)" />
+            <span>Knowledge Base & Ingestion</span>
+          </h1>
+          <p className="workspace-subtitle">
+            Connect enterprise data sources to construct isolated vector embeddings and knowledge graph entities.
           </p>
         </div>
-        <button 
-          onClick={fetchSources} 
-          className="btn btn-secondary"
-          style={{ fontSize: '12px', padding: '6px 12px' }}
-        >
-          <RefreshCw size={13} className={loading ? 'spin' : ''} />
-          <span>Refresh</span>
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '8px', 
+            padding: '6px 12px', 
+            borderRadius: '8px', 
+            background: 'var(--bg-surface-1)', 
+            border: '1px solid var(--border-hairline)',
+            fontSize: '12px',
+            color: 'var(--text-secondary)'
+          }}>
+            <span>Indexed Documents:</span>
+            <strong className="tabular-nums" style={{ color: 'var(--text-primary)' }}>{sources.length}</strong>
+          </div>
+          <button 
+            onClick={fetchSources} 
+            className="btn btn-secondary"
+            title="Refresh documents list"
+          >
+            <RefreshCw size={13} className={loading ? 'spin' : ''} />
+            <span>Sync</span>
+          </button>
+        </div>
       </div>
 
-      {/* Ingestion Hub Card */}
-      <div className="hairline-card" style={{ padding: '20px', marginBottom: '28px' }}>
-        {/* Segmented Mode Selector */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+      {/* Unified Ingestion Console */}
+      <div className="glass-panel" style={{ padding: '20px', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
           <div className="segmented-control">
             <button
               onClick={() => { setActiveTab('upload'); setFeedback(null); }}
               className={activeTab === 'upload' ? 'active' : ''}
             >
-              <UploadCloud size={13} />
+              <UploadCloud size={14} />
               <span>Document Upload</span>
             </button>
             <button
               onClick={() => { setActiveTab('crawl'); setFeedback(null); }}
               className={activeTab === 'crawl' ? 'active' : ''}
             >
-              <Globe size={13} />
+              <Globe size={14} />
               <span>Web Scraper</span>
             </button>
             <button
               onClick={() => { setActiveTab('raw'); setFeedback(null); }}
               className={activeTab === 'raw' ? 'active' : ''}
             >
-              <FileText size={13} />
-              <span>Raw Text</span>
-            </button>
-            <button
-              onClick={() => { setActiveTab('search'); setFeedback(null); }}
-              className={activeTab === 'search' ? 'active' : ''}
-            >
-              <Search size={13} />
-              <span>Vector Query Test</span>
+              <FileText size={14} />
+              <span>Raw Text / Markdown</span>
             </button>
           </div>
 
           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            Gemini 768-dim embeddings · Cosine Distance
+            768-dim Vector Embeddings · Recursive Chunking
           </div>
         </div>
 
@@ -275,14 +274,14 @@ export default function SourceManager() {
           </div>
         )}
 
-        {/* 1. File Upload Mode */}
+        {/* Mode 1: File Upload */}
         {activeTab === 'upload' && (
           <form onSubmit={handleFileUpload}>
             <div 
               style={{
                 border: '1px dashed var(--border-subtle)',
                 borderRadius: '10px',
-                padding: '36px 20px',
+                padding: '32px 20px',
                 textAlign: 'center',
                 background: 'var(--bg-surface-2)',
                 cursor: 'pointer',
@@ -297,12 +296,12 @@ export default function SourceManager() {
                 accept=".pdf,.docx,.txt,.csv,.md"
                 onChange={(e) => setSelectedFile(e.target.files[0] || null)}
               />
-              <UploadCloud size={30} color="var(--accent-primary)" style={{ marginBottom: '8px' }} />
+              <UploadCloud size={32} color="var(--accent-primary)" style={{ marginBottom: '8px' }} />
               <div style={{ fontSize: '13.5px', fontWeight: 500, color: 'var(--text-primary)' }}>
-                {selectedFile ? selectedFile.name : 'Select or drop a document to ingest'}
+                {selectedFile ? selectedFile.name : 'Select or drag & drop a file to index'}
               </div>
               <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                PDF, DOCX, TXT, CSV, Markdown · Maximum 25 MB
+                PDF, DOCX, TXT, CSV, Markdown · Up to 25 MB
               </div>
             </div>
 
@@ -312,7 +311,6 @@ export default function SourceManager() {
                   type="button" 
                   onClick={() => setSelectedFile(null)} 
                   className="btn btn-secondary"
-                  style={{ fontSize: '12px' }}
                 >
                   Cancel
                 </button>
@@ -320,38 +318,37 @@ export default function SourceManager() {
                   type="submit" 
                   disabled={submitting} 
                   className="btn btn-primary"
-                  style={{ fontSize: '12px' }}
                 >
-                  {submitting ? 'Indexing...' : `Upload "${selectedFile.name}"`}
+                  {submitting ? 'Indexing...' : `Ingest "${selectedFile.name}"`}
                 </button>
               </div>
             )}
           </form>
         )}
 
-        {/* 2. Web Crawler Mode */}
+        {/* Mode 2: Web Scraper */}
         {activeTab === 'crawl' && (
-          <form onSubmit={handleCrawlSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <form onSubmit={handleCrawlSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
               <div>
-                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
+                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
                   Target Webpage URL *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="https://en.wikipedia.org/wiki/Neo4j"
+                  placeholder="https://docs.example.com/api"
                   value={crawlUrl}
                   onChange={(e) => setCrawlUrl(e.target.value)}
                 />
               </div>
               <div>
-                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-                  Document Name (Optional)
+                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
+                  Document Title (Optional)
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Neo4j Overview"
+                  placeholder="e.g. API Reference"
                   value={crawlName}
                   onChange={(e) => setCrawlName(e.target.value)}
                 />
@@ -359,7 +356,7 @@ export default function SourceManager() {
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
                 <ShieldCheck size={13} color="var(--accent-emerald)" />
                 <span>SSRF Defense active: Internal networks, private loopbacks, and link-local IPs are blocked.</span>
               </span>
@@ -367,37 +364,36 @@ export default function SourceManager() {
                 type="submit" 
                 disabled={submitting || !crawlUrl} 
                 className="btn btn-primary"
-                style={{ fontSize: '12px' }}
               >
-                {submitting ? 'Scraping...' : 'Crawl & Index'}
+                {submitting ? 'Scraping...' : 'Crawl & Extract'}
               </button>
             </div>
           </form>
         )}
 
-        {/* 3. Raw Text Mode */}
+        {/* Mode 3: Raw Text */}
         {activeTab === 'raw' && (
           <form onSubmit={handleRawSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div>
-              <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
+              <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
                 Document Title *
               </label>
               <input
                 type="text"
                 required
-                placeholder="Knowledge Snippet Title"
+                placeholder="e.g. Deployment Architecture Guide"
                 value={rawTitle}
                 onChange={(e) => setRawTitle(e.target.value)}
               />
             </div>
             <div>
-              <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-                Content *
+              <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
+                Content & Documentation *
               </label>
               <textarea
                 required
                 rows={4}
-                placeholder="Paste guidelines, FAQs, or raw markdown documentation..."
+                placeholder="Paste technical documentation, FAQs, or enterprise policies..."
                 value={rawContent}
                 onChange={(e) => setRawContent(e.target.value)}
               />
@@ -407,125 +403,79 @@ export default function SourceManager() {
                 type="submit" 
                 disabled={submitting || !rawTitle || !rawContent} 
                 className="btn btn-primary"
-                style={{ fontSize: '12px' }}
               >
-                {submitting ? 'Indexing...' : 'Save Snippet'}
+                {submitting ? 'Indexing...' : 'Save & Extract Graph'}
               </button>
             </div>
           </form>
         )}
-
-        {/* 4. Vector Query Playground */}
-        {activeTab === 'search' && (
-          <div>
-            <form onSubmit={handleSemanticSearch} style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', marginBottom: '16px' }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-                  Semantic Search Test Query
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. What database architectures are supported?"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-              <div style={{ width: '80px' }}>
-                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-                  Top-K
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={searchTopK}
-                  onChange={(e) => setSearchTopK(parseInt(e.target.value) || 4)}
-                />
-              </div>
-              <button type="submit" disabled={searching} className="btn btn-primary" style={{ height: '35px' }}>
-                <Search size={13} />
-                <span>{searching ? 'Querying...' : 'Query'}</span>
-              </button>
-            </form>
-
-            {searchResults.length > 0 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
-                  Found {searchResults.length} closest semantic matches:
-                </div>
-                {searchResults.map((res, idx) => (
-                  <div key={idx} className="hairline-card" style={{ padding: '10px 12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11.5px' }}>
-                      <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                        {res.source_name} <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>#chunk-{res.chunk_index}</span>
-                      </span>
-                      <span className="tabular-nums" style={{ color: 'var(--accent-emerald)', fontWeight: 600 }}>
-                        {(res.similarity_score * 100).toFixed(1)}% match
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, fontFamily: 'var(--font-mono)' }}>
-                      "{res.content}"
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* Sources Data Grid Table */}
-      <div className="hairline-card" style={{ overflow: 'hidden' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-hairline)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
-            Knowledge Documents ({sources.length})
+      {/* Indexed Knowledge Inventory Table */}
+      <div className="data-table-container">
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border-hairline)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            Indexed Knowledge Documents
           </div>
+          <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+            Row-Level Isolated across Tenant
+          </span>
         </div>
 
         {sources.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
-            No sources uploaded yet. Ingest a document or crawl a URL above.
+          <div className="empty-state-box">
+            <div className="empty-state-icon">
+              <FileText size={24} />
+            </div>
+            <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px' }}>
+              No Knowledge Sources Yet
+            </div>
+            <div style={{ fontSize: '12.5px', color: 'var(--text-muted)', maxWidth: '45ch' }}>
+              Upload your technical documents, crawl API docs, or paste markdown notes above to begin building your knowledge graph.
+            </div>
           </div>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '12.5px' }}>
+          <table className="data-table">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-hairline)', color: 'var(--text-muted)', fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                <th style={{ padding: '8px 16px', fontWeight: 500 }}>Source Name</th>
-                <th style={{ padding: '8px 16px', fontWeight: 500 }}>Type</th>
-                <th style={{ padding: '8px 16px', fontWeight: 500 }}>Status</th>
-                <th style={{ padding: '8px 16px', fontWeight: 500 }}>Chunks</th>
-                <th style={{ padding: '8px 16px', fontWeight: 500 }}>Date</th>
-                <th style={{ padding: '8px 16px', textAlign: 'right', fontWeight: 500 }}>Actions</th>
+              <tr>
+                <th>Document Name</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Chunks</th>
+                <th>Ingested</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {sources.map((src) => (
-                <tr key={src.id} style={{ borderBottom: '1px solid var(--border-hairline)', transition: 'background 0.15s ease' }}>
-                  <td style={{ padding: '10px 16px', fontWeight: 500, color: 'var(--text-primary)' }}>
-                    {src.name}
+                <tr key={src.id}>
+                  <td style={{ fontWeight: 500 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {getSourceIcon(src.source_type, src.name)}
+                      <span>{src.name}</span>
+                    </div>
                   </td>
-                  <td style={{ padding: '10px 16px' }}>
-                    <span className="eyebrow-tag" style={{ fontSize: '9.5px', padding: '1px 5px' }}>
+                  <td>
+                    <span className="eyebrow-tag" style={{ fontSize: '9.5px' }}>
                       {src.source_type}
                     </span>
                   </td>
-                  <td style={{ padding: '10px 16px' }}>
+                  <td>
                     {renderStatus(src.status, src.error_message)}
                   </td>
-                  <td className="tabular-nums" style={{ padding: '10px 16px', color: 'var(--text-secondary)' }}>
+                  <td className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
                     {src.chunk_count || 0}
                   </td>
-                  <td className="tabular-nums" style={{ padding: '10px 16px', color: 'var(--text-muted)', fontSize: '11.5px' }}>
-                    {new Date(src.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                  <td className="tabular-nums" style={{ color: 'var(--text-muted)', fontSize: '11.5px' }}>
+                    {new Date(src.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                   </td>
-                  <td style={{ padding: '10px 16px', textAlign: 'right' }}>
-                    <div style={{ display: 'inline-flex', gap: '4px' }}>
+                  <td style={{ textAlign: 'right' }}>
+                    <div style={{ display: 'inline-flex', gap: '6px' }}>
                       <button
                         onClick={() => handleInspectChunks(src)}
                         className="btn btn-secondary"
-                        style={{ padding: '3px 7px', fontSize: '11px', borderRadius: '4px' }}
-                        title="View chunks"
+                        style={{ padding: '4px 8px', fontSize: '11.5px' }}
+                        title="View chunks & embeddings"
                       >
                         <Eye size={12} />
                         <span>Chunks</span>
@@ -533,16 +483,16 @@ export default function SourceManager() {
                       <button
                         onClick={() => handleReprocess(src.id)}
                         className="btn btn-secondary"
-                        style={{ padding: '3px 7px', fontSize: '11px', borderRadius: '4px' }}
-                        title="Reprocess"
+                        style={{ padding: '4px 8px', fontSize: '11.5px' }}
+                        title="Reprocess and rebuild graph"
                       >
                         <RefreshCw size={12} />
                       </button>
                       <button
                         onClick={() => handleDelete(src.id)}
                         className="btn btn-danger"
-                        style={{ padding: '3px 7px', fontSize: '11px', borderRadius: '4px' }}
-                        title="Delete"
+                        style={{ padding: '4px 8px', fontSize: '11.5px' }}
+                        title="Delete source"
                       >
                         <Trash2 size={12} />
                       </button>
@@ -555,45 +505,63 @@ export default function SourceManager() {
         )}
       </div>
 
-      {/* Chunks Inspector Slide Modal */}
+      {/* Slide-Over Chunk Inspector Drawer */}
       {inspectSource && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.75)',
-          backdropFilter: 'blur(6px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '24px'
-        }}>
-          <div className="hairline-card" style={{ width: '100%', maxWidth: '750px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: '20px', background: 'var(--bg-surface-1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--border-hairline)', paddingBottom: '10px' }}>
+        <div className="drawer-backdrop" onClick={() => setInspectSource(null)}>
+          <div className="drawer-panel" onClick={(e) => e.stopPropagation()}>
+            <div style={{ 
+              padding: '18px 24px', 
+              borderBottom: '1px solid var(--border-hairline)', 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center' 
+            }}>
               <div>
-                <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Chunks: {inspectSource.name}</h3>
-                <div style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: 600 }}>{inspectSource.name}</h3>
+                <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '2px' }}>
                   {chunks.length} total chunks · 768d pgvector embeddings
                 </div>
               </div>
-              <button onClick={() => setInspectSource(null)} className="btn-ghost" style={{ padding: '4px', borderRadius: '4px' }}>
+              <button 
+                onClick={() => setInspectSource(null)} 
+                className="btn btn-ghost" 
+                style={{ padding: '6px', borderRadius: '6px' }}
+              >
                 <X size={16} />
               </button>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {loadingChunks ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>Loading chunks...</div>
+                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  Loading vector chunks...
+                </div>
               ) : chunks.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No chunks generated yet.</div>
+                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  No chunks generated for this source.
+                </div>
               ) : (
                 chunks.map((chunk) => (
-                  <div key={chunk.id} className="hairline-card" style={{ padding: '10px 12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '11px' }}>
-                      <span className="tabular-nums" style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>Chunk #{chunk.chunk_index}</span>
-                      <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>{chunk.char_count} chars</span>
+                  <div key={chunk.id} className="glass-panel" style={{ padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px', fontSize: '11px' }}>
+                      <span className="tabular-nums" style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>
+                        Chunk #{chunk.chunk_index}
+                      </span>
+                      <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                        {chunk.char_count} chars
+                      </span>
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap' }}>
+                    <div style={{ 
+                      fontSize: '12px', 
+                      color: 'var(--text-secondary)', 
+                      lineHeight: 1.6, 
+                      fontFamily: 'var(--font-mono)', 
+                      whiteSpace: 'pre-wrap',
+                      background: 'var(--bg-surface-2)',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-hairline)'
+                    }}>
                       {chunk.content}
                     </div>
                   </div>

@@ -16,7 +16,8 @@ import {
   AlertCircle,
   ExternalLink,
   Cpu,
-  X
+  X,
+  Settings as SettingsIcon
 } from 'lucide-react';
 
 export default function ChatbotSettings({ tenant }) {
@@ -60,7 +61,7 @@ export default function ChatbotSettings({ tenant }) {
         if (data) {
           setName(data.name || 'OmniGraph Assistant');
           setAvatarUrl(data.avatar_url || '');
-          setWelcomeMessage(data.welcome_message || '');
+          setWelcomeMessage(data.welcome_message || 'Hello! How can I assist your team today?');
           setTone(data.tone || 'professional');
           setSystemPrompt(data.system_prompt || '');
           setDefaultTopK(data.default_top_k || 4);
@@ -133,8 +134,7 @@ export default function ChatbotSettings({ tenant }) {
     }
   };
 
-
-  const widgetScriptCode = `<!-- OmniGraph GraphRAG Embed Widget -->
+  const widgetScriptCode = `<!-- OmniGraph Knowledge Widget -->
 <script 
   src="${window.location.origin}/widget.js" 
   data-tenant-slug="${tenantSlug}"
@@ -150,60 +150,64 @@ export default function ChatbotSettings({ tenant }) {
   };
 
   return (
-    <div style={{ padding: '28px 36px', maxWidth: '1100px', margin: '0 auto', width: '100%' }}>
-      {/* Header */}
-      <div style={{ marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '20px', fontWeight: 600 }}>Persona Tuning & Widget Deployment</h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginTop: '4px' }}>
-          Tune model instructions, response temperature, and generate an isolated Shadow DOM embed tag for client websites.
-        </p>
-      </div>
+    <div className="workspace-page">
+      {/* Workspace Header */}
+      <div className="workspace-header">
+        <div>
+          <h1 className="workspace-title">
+            <SettingsIcon size={20} color="var(--accent-primary)" />
+            <span>Integration & Bot Settings</span>
+          </h1>
+          <p className="workspace-subtitle">
+            Configure the AI assistant persona, validate Gemini LLM credentials, and deploy the embeddable web widget.
+          </p>
+        </div>
 
-      {/* Segmented Controller */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
+        {/* Sub-workspace Tabs */}
         <div className="segmented-control">
           <button
             onClick={() => setActiveSubTab('persona')}
             className={activeSubTab === 'persona' ? 'active' : ''}
           >
-            <Bot size={13} />
-            <span>Persona & Parameters</span>
+            <Bot size={14} />
+            <span>AI Persona & Engine</span>
           </button>
           <button
             onClick={() => setActiveSubTab('widget')}
             className={activeSubTab === 'widget' ? 'active' : ''}
           >
-            <Code size={13} />
-            <span>Embed Snippet</span>
+            <Code size={14} />
+            <span>Embeddable Widget</span>
           </button>
         </div>
       </div>
 
-      {/* Sub-Tab 1: Persona Tuning Form */}
+      {/* Sub-Tab 1: Persona Tuning & LLM Engine Form */}
       {activeSubTab === 'persona' && (
-        <form onSubmit={handleSaveSettings} className="hairline-card" style={{ padding: '24px', maxWidth: '800px' }}>
+        <form onSubmit={handleSaveSettings} className="glass-panel" style={{ padding: '24px', maxWidth: '840px' }}>
           {saveSuccess && (
             <div style={{
               background: 'var(--accent-emerald-subtle)',
               border: '1px solid rgba(16, 185, 129, 0.3)',
-              borderRadius: '6px',
+              borderRadius: '8px',
               padding: '10px 14px',
-              marginBottom: '18px',
+              marginBottom: '20px',
               color: 'var(--accent-emerald)',
               fontSize: '12.5px',
               display: 'flex',
               alignItems: 'center',
-              gap: '6px'
+              gap: '8px'
             }}>
               <Check size={14} />
-              <span>Persona configuration saved successfully.</span>
+              <span>Persona & LLM configuration updated successfully.</span>
             </div>
           )}
 
+          {/* Primary Identity Section */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
             <div>
-              <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-                Assistant Display Name
+              <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
+                Assistant Display Name *
               </label>
               <input
                 type="text"
@@ -214,12 +218,12 @@ export default function ChatbotSettings({ tenant }) {
             </div>
 
             <div>
-              <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-                Tone & Communication Style
+              <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
+                Persona Tone & Communication Style
               </label>
               <select value={tone} onChange={(e) => setTone(e.target.value)}>
                 <option value="professional">Professional (Formal & Precise)</option>
-                <option value="technical">Technical (In-depth & Code-focused)</option>
+                <option value="technical">Technical (Code & Architecture Focused)</option>
                 <option value="friendly">Friendly (Warm & Explanatory)</option>
                 <option value="concise">Concise (Direct Bullet Points)</option>
               </select>
@@ -227,7 +231,7 @@ export default function ChatbotSettings({ tenant }) {
           </div>
 
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
+            <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
               Welcome Greeting Message
             </label>
             <input
@@ -238,25 +242,25 @@ export default function ChatbotSettings({ tenant }) {
             />
           </div>
 
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-              Custom System Directives (Gemini 3.8 Flash)
+          <div style={{ marginBottom: '22px' }}>
+            <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
+              Custom System Directives
             </label>
             <textarea
               rows={4}
-              placeholder="e.g. You are the AI documentation specialist for our platform. Always highlight security implications..."
+              placeholder="e.g. You are the AI architecture guide for our enterprise stack. Always highlight security implications..."
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
             />
           </div>
 
-          {/* LLM Engine & Google Gemini API Key Card */}
+          {/* LLM Engine & Google Gemini API Key Panel */}
           <div style={{
             background: 'var(--bg-surface-2)',
             padding: '16px',
             borderRadius: '8px',
             border: '1px solid var(--border-hairline)',
-            marginBottom: '20px'
+            marginBottom: '22px'
           }}>
             <div style={{ 
               display: 'flex', 
@@ -274,23 +278,15 @@ export default function ChatbotSettings({ tenant }) {
                 gap: '6px' 
               }}>
                 <Key size={13} style={{ color: 'var(--accent-primary)' }} />
-                <span>Google Gemini AI Engine & API Key</span>
+                <span>Google Gemini Credentials & Engine</span>
               </div>
 
               {/* Status Badge */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {hasCustomApiKey && !clearKeyRequested ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{
-                      fontSize: '11px',
-                      color: 'var(--accent-emerald)',
-                      background: 'rgba(16, 185, 129, 0.08)',
-                      padding: '2px 8px',
-                      borderRadius: '4px',
-                      border: '1px solid rgba(16, 185, 129, 0.25)',
-                      fontFamily: 'monospace'
-                    }}>
-                      ● Custom Key ({apiKeyPreview})
+                    <span className="status-pill indexed">
+                      Custom Key ({apiKeyPreview})
                     </span>
                     <button
                       type="button"
@@ -313,15 +309,8 @@ export default function ChatbotSettings({ tenant }) {
                   </div>
                 ) : clearKeyRequested ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{
-                      fontSize: '11px',
-                      color: '#F59E0B',
-                      background: 'rgba(245, 158, 11, 0.08)',
-                      padding: '2px 8px',
-                      borderRadius: '4px',
-                      border: '1px solid rgba(245, 158, 11, 0.25)'
-                    }}>
-                      ● Will revert to .env on Save
+                    <span className="status-pill processing">
+                      Reverts on Save
                     </span>
                     <button
                       type="button"
@@ -338,37 +327,23 @@ export default function ChatbotSettings({ tenant }) {
                     </button>
                   </div>
                 ) : systemKeyConfigured ? (
-                  <span style={{
-                    fontSize: '11px',
-                    color: 'var(--accent-cyan)',
-                    background: 'rgba(6, 182, 212, 0.08)',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    border: '1px solid rgba(6, 182, 212, 0.25)'
-                  }}>
-                    ● Server Default (.env) Active
+                  <span className="status-pill indexed" style={{ color: '#38BDF8', borderColor: 'rgba(56, 189, 248, 0.3)', background: 'rgba(56, 189, 248, 0.08)' }}>
+                    System Key Active
                   </span>
                 ) : (
-                  <span style={{
-                    fontSize: '11px',
-                    color: 'var(--text-muted)',
-                    background: 'var(--bg-surface-3)',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    border: '1px solid var(--border-hairline)'
-                  }}>
-                    ○ Mock Mode (No Key Set)
+                  <span className="status-pill" style={{ background: 'var(--bg-surface-3)', color: 'var(--text-muted)' }}>
+                    Mock Mode
                   </span>
                 )}
               </div>
             </div>
 
-            {/* Input Row */}
+            {/* API Key Input Row */}
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
               <div style={{ position: 'relative', flex: 1 }}>
                 <input
                   type={showApiKey ? 'text' : 'password'}
-                  placeholder={hasCustomApiKey && !clearKeyRequested ? 'Enter new API key to rotate existing...' : 'Enter Gemini API Key (e.g. AIzaSy...)'}
+                  placeholder={hasCustomApiKey && !clearKeyRequested ? 'Enter new API key to rotate...' : 'Enter Gemini API Key (e.g. AIzaSy...)'}
                   value={geminiApiKey}
                   onChange={(e) => {
                     setGeminiApiKey(e.target.value);
@@ -376,10 +351,9 @@ export default function ChatbotSettings({ tenant }) {
                     if (validationResult) setValidationResult(null);
                   }}
                   style={{
-                    fontFamily: showApiKey ? 'monospace' : 'inherit',
+                    fontFamily: showApiKey ? 'var(--font-mono)' : 'inherit',
                     paddingRight: '36px',
-                    fontSize: '12px',
-                    width: '100%'
+                    fontSize: '12px'
                   }}
                 />
                 <button
@@ -411,22 +385,19 @@ export default function ChatbotSettings({ tenant }) {
                 className="btn btn-secondary"
                 style={{ 
                   padding: '7px 14px', 
-                  fontSize: '11.5px',
-                  whiteSpace: 'nowrap',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
+                  fontSize: '12px',
+                  whiteSpace: 'nowrap'
                 }}
               >
                 <Cpu size={13} />
-                <span>{validatingKey ? 'Verifying...' : 'Test Connection'}</span>
+                <span>{validatingKey ? 'Testing...' : 'Test Connection'}</span>
               </button>
             </div>
 
-            {/* Live Validation Result Banner */}
+            {/* Validation Banner */}
             {validationResult && (
               <div style={{
-                background: validationResult.valid ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+                background: validationResult.valid ? 'var(--accent-emerald-subtle)' : 'var(--accent-rose-subtle)',
                 border: `1px solid ${validationResult.valid ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
                 borderRadius: '6px',
                 padding: '8px 12px',
@@ -442,10 +413,9 @@ export default function ChatbotSettings({ tenant }) {
               </div>
             )}
 
-            {/* Helper Caption */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
               <span>
-                Tenant keys are securely stored and isolated. Leave empty to use server <code style={{ color: 'var(--text-secondary)' }}>.env</code> fallback.
+                Multi-tenant row-level isolation guarantees private API key storage.
               </span>
               <a
                 href="https://aistudio.google.com/app/apikey"
@@ -459,28 +429,28 @@ export default function ChatbotSettings({ tenant }) {
                   textDecoration: 'none'
                 }}
               >
-                <span>Get API key from Google AI Studio</span>
+                <span>Google AI Studio Key</span>
                 <ExternalLink size={10} />
               </a>
             </div>
           </div>
 
-          {/* Hyperparameters Box */}
+          {/* Hyperparameters Configuration */}
           <div style={{
             background: 'var(--bg-surface-2)',
             padding: '16px',
             borderRadius: '8px',
             border: '1px solid var(--border-hairline)',
-            marginBottom: '20px'
+            marginBottom: '22px'
           }}>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '5px' }}>
               <Sliders size={13} />
               <span>Default Retrieval Hyperparameters</span>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '5px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Vector Top-K:</span>
                   <strong className="tabular-nums" style={{ color: 'var(--accent-primary)' }}>{defaultTopK}</strong>
                 </div>
@@ -494,7 +464,7 @@ export default function ChatbotSettings({ tenant }) {
               </div>
 
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '5px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Graph Hops:</span>
                   <strong className="tabular-nums" style={{ color: 'var(--accent-cyan)' }}>{defaultMaxHops}</strong>
                 </div>
@@ -508,7 +478,7 @@ export default function ChatbotSettings({ tenant }) {
               </div>
 
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '5px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Temperature:</span>
                   <strong className="tabular-nums" style={{ color: 'var(--accent-emerald)' }}>{temperature.toFixed(2)}</strong>
                 </div>
@@ -529,7 +499,7 @@ export default function ChatbotSettings({ tenant }) {
               type="submit"
               disabled={saving}
               className="btn btn-primary"
-              style={{ padding: '8px 18px', fontSize: '12.5px' }}
+              style={{ padding: '8px 20px', fontSize: '12.5px' }}
             >
               <Save size={14} />
               <span>{saving ? 'Saving...' : 'Save Configuration'}</span>
@@ -538,15 +508,15 @@ export default function ChatbotSettings({ tenant }) {
         </form>
       )}
 
-      {/* Sub-Tab 2: Widget Embed Generator */}
+      {/* Sub-Tab 2: Web Widget Embed Generator */}
       {activeSubTab === 'widget' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: '24px' }}>
-          <div className="hairline-card" style={{ padding: '24px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px' }}>
-              Micro-Frontend Script Snippet
+          <div className="glass-panel" style={{ padding: '24px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '6px' }}>
+              Micro-Frontend Script Embed
             </h3>
-            <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Embed right before the closing <code>&lt;/body&gt;</code> tag of your website or web application.
+            <p style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginBottom: '18px', lineHeight: 1.5 }}>
+              Paste this script tag before the closing <code>&lt;/body&gt;</code> tag on your web platform. It mounts an isolated Shadow DOM chat widget.
             </p>
 
             <div style={{ position: 'relative', marginBottom: '20px' }}>
@@ -554,7 +524,7 @@ export default function ChatbotSettings({ tenant }) {
                 background: 'var(--bg-surface-2)',
                 border: '1px solid var(--border-hairline)',
                 borderRadius: '8px',
-                padding: '14px 16px',
+                padding: '16px',
                 fontFamily: 'var(--font-mono)',
                 fontSize: '12px',
                 color: 'var(--text-primary)',
@@ -569,10 +539,10 @@ export default function ChatbotSettings({ tenant }) {
                 className="btn btn-primary"
                 style={{
                   position: 'absolute',
-                  top: '10px',
-                  right: '10px',
+                  top: '12px',
+                  right: '12px',
                   fontSize: '11px',
-                  padding: '4px 8px'
+                  padding: '4px 10px'
                 }}
               >
                 {copied ? <Check size={12} /> : <Copy size={12} />}
@@ -580,10 +550,10 @@ export default function ChatbotSettings({ tenant }) {
               </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
               <div>
-                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-                  Accent Theme Color
+                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
+                  Widget Accent Color
                 </label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <input
@@ -602,85 +572,88 @@ export default function ChatbotSettings({ tenant }) {
               </div>
 
               <div>
-                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
-                  Screen Float Anchor
+                <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
+                  Screen Float Position
                 </label>
                 <select value={position} onChange={(e) => setPosition(e.target.value)}>
-                  <option value="right">Bottom Right (Default)</option>
+                  <option value="right">Bottom Right (Standard)</option>
                   <option value="left">Bottom Left</option>
                 </select>
               </div>
             </div>
 
-            <div style={{ background: 'var(--bg-surface-2)', padding: '12px', borderRadius: '6px', fontSize: '11.5px', color: 'var(--text-muted)' }}>
-              <strong style={{ color: 'var(--text-primary)' }}>Shadow DOM Protected:</strong> Host website CSS styles (e.g. Tailwind resets, global styles) will never bleed into or break this widget.
+            <div style={{ background: 'var(--bg-surface-2)', padding: '12px 14px', borderRadius: '8px', fontSize: '11.5px', color: 'var(--text-muted)', border: '1px solid var(--border-hairline)' }}>
+              <strong style={{ color: 'var(--text-primary)' }}>Shadow DOM Protected:</strong> Host CSS resets and frameworks cannot bleed into or affect the styling of this embeddable chat bubble.
             </div>
           </div>
 
           {/* Right Column: Live Mockup Frame */}
-          <div className="hairline-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '10px' }}>
-              Host Website Preview
+          <div className="glass-panel" style={{ padding: '18px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '12px', fontWeight: 600 }}>
+              Live Host Preview
             </div>
 
             <div style={{
               flex: 1,
-              background: '#FFFFFF',
+              background: '#0B0F17',
               borderRadius: '8px',
               position: 'relative',
               overflow: 'hidden',
               minHeight: '380px',
               display: 'flex',
               flexDirection: 'column',
-              boxShadow: 'inset 0 1px 4px rgba(0,0,0,0.08)'
+              border: '1px solid var(--border-hairline)'
             }}>
-              <div style={{ background: '#F1F5F9', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#CBD5E1' }}></span>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#CBD5E1' }}></span>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#CBD5E1' }}></span>
-                <span style={{ background: '#FFFFFF', padding: '1px 6px', borderRadius: '3px', fontSize: '9px', color: '#94A3B8', marginLeft: '6px', flex: 1 }}>
-                  https://client-site.com
+              {/* Browser chrome header */}
+              <div style={{ background: '#131926', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#EF4444' }}></span>
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#F59E0B' }}></span>
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#10B981' }}></span>
+                <span style={{ background: '#1E293B', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', color: '#94A3B8', marginLeft: '6px', flex: 1, fontFamily: 'var(--font-mono)' }}>
+                  https://acme-cloud.io/dashboard
                 </span>
               </div>
 
-              <div style={{ padding: '16px' }}>
-                <div style={{ height: '10px', width: '50%', background: '#E2E8F0', borderRadius: '3px', marginBottom: '8px' }}></div>
-                <div style={{ height: '6px', width: '80%', background: '#F1F5F9', borderRadius: '2px', marginBottom: '4px' }}></div>
-                <div style={{ height: '6px', width: '65%', background: '#F1F5F9', borderRadius: '2px', marginBottom: '14px' }}></div>
-                <div style={{ height: '50px', width: '100%', background: '#F8FAFC', borderRadius: '6px' }}></div>
+              {/* Wireframe mock layout */}
+              <div style={{ padding: '20px' }}>
+                <div style={{ height: '12px', width: '40%', background: '#1E293B', borderRadius: '3px', marginBottom: '10px' }}></div>
+                <div style={{ height: '7px', width: '85%', background: '#141E33', borderRadius: '2px', marginBottom: '6px' }}></div>
+                <div style={{ height: '7px', width: '65%', background: '#141E33', borderRadius: '2px', marginBottom: '16px' }}></div>
+                <div style={{ height: '70px', width: '100%', background: '#141E33', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)' }}></div>
               </div>
 
-              {/* Mock Floating Widget Bubble */}
+              {/* Floating Widget Mockup */}
               <div style={{
                 position: 'absolute',
-                bottom: '12px',
-                [position === 'left' ? 'left' : 'right']: '12px',
+                bottom: '16px',
+                [position === 'left' ? 'left' : 'right']: '16px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px'
               }}>
                 <div style={{
                   background: primaryColor,
-                  width: '42px',
-                  height: '42px',
+                  width: '44px',
+                  height: '44px',
                   borderRadius: '50%',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#FFFFFF',
-                  boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
-                  position: 'relative'
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                  position: 'relative',
+                  cursor: 'pointer'
                 }}>
-                  <MessageSquare size={18} />
+                  <MessageSquare size={19} />
                   <span style={{
                     position: 'absolute',
                     top: '0px',
                     right: '0px',
-                    width: '9px',
-                    height: '9px',
+                    width: '10px',
+                    height: '10px',
                     borderRadius: '50%',
                     background: '#10B981',
-                    border: '1.5px solid #FFFFFF'
+                    border: '2px solid #0B0F17'
                   }}></span>
                 </div>
               </div>
