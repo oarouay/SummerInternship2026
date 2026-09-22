@@ -397,47 +397,94 @@ class Neo4jGraphStore(BaseGraphStore):
         self, tenant_id: int, entity_names: List[str], max_hops: int = 1, limit: int = 25
     ) -> GraphNeighborhoodResponse:
         await self.initialize()
-        where_clause = "WHERE start.name IN $entity_names" if entity_names else ""
-        cypher = f"""
-        MATCH (start:Entity {{tenant_id: $tenant_id}})
-        {where_clause}
-        OPTIONAL MATCH path = (start)-[r:RELATION*1..{max_hops}]-(connected:Entity {{tenant_id: $tenant_id}})
-        RETURN start, path
-        LIMIT $limit
-        """
-        async with self.driver.session() as session:
-            result = await session.run(
-                cypher, tenant_id=tenant_id, entity_names=entity_names, limit=limit
-            )
-            records = [rec async for rec in result]
 
         nodes_dict: Dict[str, GraphNode] = {}
         edges_list: List[GraphEdge] = []
         seen_edges: Set[Tuple[str, str, str]] = set()
 
-        for rec in records:
-            start_node = rec["start"]
-            s_name = start_node.get("name")
-            if s_name and s_name not in nodes_dict:
-                nodes_dict[s_name] = GraphNode(
-                    name=s_name,
-                    type=start_node.get("type", "CONCEPT"),
-                    description=start_node.get("description", ""),
-                    chunk_ids=start_node.get("chunk_ids", []),
+        if entity_names:
+            cypher = f"""
+            MATCH (start:Entity {{tenant_id: $tenant_id}})
+            WHERE start.name IN $entity_names
+            OPTIONAL MATCH path = (start)-[r:RELATION*1..{max_hops}]-(connected:Entity {{tenant_id: $tenant_id}})
+            RETURN start, path
+            LIMIT $limit
+            """
+            async with self.driver.session() as session:
+                result = await session.run(
+                    cypher, tenant_id=tenant_id, entity_names=entity_names, limit=limit
                 )
+                records = [rec async for rec in result]
 
-            path = rec.get("path")
-            if path:
-                for n in path.nodes:
-                    name = n.get("name")
-                    if name and name not in nodes_dict:
-                        nodes_dict[name] = GraphNode(
-                            name=name,
-                            type=n.get("type", "CONCEPT"),
-                            description=n.get("description", ""),
-                            chunk_ids=n.get("chunk_ids", []),
-                        )
-                for rel in path.relationships:
+            for rec in records:
+                start_node = rec["start"]
+                s_name = start_node.get("name")
+                if s_name and s_name not in nodes_dict:
+                    nodes_dict[s_name] = GraphNode(
+                        name=s_name,
+                        type=start_node.get("type", "CONCEPT"),
+                        description=start_node.get("description", ""),
+                        chunk_ids=start_node.get("chunk_ids", []),
+                    )
+
+                path = rec.get("path")
+                if path:
+                    for n in path.nodes:
+                        name = n.get("name")
+                        if name and name not in nodes_dict:
+                            nodes_dict[name] = GraphNode(
+                                name=name,
+                                type=n.get("type", "CONCEPT"),
+                                description=n.get("description", ""),
+                                chunk_ids=n.get("chunk_ids", []),
+                            )
+                    for rel in path.relationships:
+                        src = rel.start_node.get("name")
+                        tgt = rel.end_node.get("name")
+                        rtype = rel.get("type", "RELATES_TO")
+                        key = (src, tgt, rtype)
+                        if key not in seen_edges and len(edges_list) < limit:
+                            seen_edges.add(key)
+                            edges_list.append(
+                                GraphEdge(
+                                    source=src,
+                                    target=tgt,
+                                    type=rtype,
+                                    description=rel.get("description", ""),
+                                    weight=rel.get("weight", 1),
+                                )
+                            )
+        else:
+            cypher = """
+            MATCH (start:Entity {tenant_id: $tenant_id})
+            WITH start LIMIT $limit
+            OPTIONAL MATCH (start)-[r:RELATION {tenant_id: $tenant_id}]-(connected:Entity {tenant_id: $tenant_id})
+            RETURN start, r, connected
+            """
+            async with self.driver.session() as session:
+                result = await session.run(
+                    cypher, tenant_id=tenant_id, limit=limit
+                )
+                records = [rec async for rec in result]
+
+            def _add_node(nd):
+                if not nd:
+                    return
+                name = nd.get("name")
+                if name and name not in nodes_dict:
+                    nodes_dict[name] = GraphNode(
+                        name=name,
+                        type=nd.get("type", "CONCEPT"),
+                        description=nd.get("description", ""),
+                        chunk_ids=nd.get("chunk_ids", []),
+                    )
+
+            for rec in records:
+                _add_node(rec.get("start"))
+                _add_node(rec.get("connected"))
+
+                rel = rec.get("r")
+                if rel:
                     src = rel.start_node.get("name")
                     tgt = rel.end_node.get("name")
                     rtype = rel.get("type", "RELATES_TO")

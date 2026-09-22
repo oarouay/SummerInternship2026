@@ -40,6 +40,26 @@ async def db_session():
         await conn.run_sync(Base.metadata.drop_all)
 
 
+from app.services.graph import InMemoryGraphStore
+import app.services.graph as graph_mod
+import app.api.v1.endpoints.graph as endpoints_graph_mod
+import app.services.synthesis as synthesis_mod
+
+
+@pytest.fixture(autouse=True)
+def isolate_graph_store(monkeypatch):
+    """Ensure all test API routes, pipeline tasks, and synthesis use an isolated in-memory graph store."""
+    test_graph_store = InMemoryGraphStore()
+    async def mock_get_graph_store():
+        return test_graph_store
+
+    monkeypatch.setattr(graph_mod, "get_graph_store", mock_get_graph_store)
+    monkeypatch.setattr(pipeline_mod, "get_graph_store", mock_get_graph_store)
+    monkeypatch.setattr(endpoints_graph_mod, "get_graph_store", mock_get_graph_store)
+    monkeypatch.setattr(synthesis_mod, "get_graph_store", mock_get_graph_store)
+    return test_graph_store
+
+
 @pytest_asyncio.fixture(scope="function")
 async def client(db_session: AsyncSession):
     """FastAPI test client with database override and pipeline background task session override."""
