@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "gemini-embedding-001"
     EMBEDDING_DIMENSIONS: int = 768
     DEFAULT_SEARCH_TOP_K: int = 5
-    LLM_MODEL: str = "gemini-3.6-flash"
+    LLM_MODEL: str = "gemini-flash-lite-latest"
 
     # Neo4j Graph Database Settings
     NEO4J_URI: str = "bolt://localhost:7687"

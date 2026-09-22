@@ -149,7 +149,14 @@ class InMemoryGraphStore(BaseGraphStore):
         if not entity_names:
             queue = deque([(name, 0) for name in list(t_nodes.keys())[:limit]])
         else:
-            queue = deque([(name, 0) for name in entity_names if name in t_nodes])
+            lower_to_orig = {k.lower(): k for k in t_nodes.keys()}
+            matched_seeds = []
+            for name in entity_names:
+                if name in t_nodes and name not in matched_seeds:
+                    matched_seeds.append(name)
+                elif name.lower() in lower_to_orig and lower_to_orig[name.lower()] not in matched_seeds:
+                    matched_seeds.append(lower_to_orig[name.lower()])
+            queue = deque([(name, 0) for name in matched_seeds])
         visited_nodes: Set[str] = {name for name, _ in queue}
 
         while queue and (len(matched_edges) < limit or len(matched_nodes) < limit):
@@ -405,7 +412,8 @@ class Neo4jGraphStore(BaseGraphStore):
         if entity_names:
             cypher = f"""
             MATCH (start:Entity {{tenant_id: $tenant_id}})
-            WHERE start.name IN $entity_names OR toLower(start.name) IN [x IN $entity_names | toLower(x)]
+            WHERE start.name IN $entity_names
+               OR toLower(start.name) IN [x IN $entity_names | toLower(x)]
             OPTIONAL MATCH path = (start)-[r:RELATION*1..{max_hops}]-(connected:Entity {{tenant_id: $tenant_id}})
             RETURN start, path
             LIMIT $limit
@@ -568,10 +576,7 @@ class Neo4jGraphStore(BaseGraphStore):
         LIMIT $limit
         """
         async with self.driver.session() as session:
-            result = await session.run(
-                cypher,
-                parameters={"tenant_id": tenant_id, "query": clean_query, "limit": limit}
-            )
+            result = await session.run(cypher, tenant_id=tenant_id, query=clean_query, limit=limit)
             records = [rec async for rec in result]
 
         return [

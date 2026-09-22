@@ -35,20 +35,17 @@ Output strictly valid JSON matching the requested schema.
 
 ### Context Handling Rules:
 
-- Inquiries About People, Leadership, or Entities (e.g., "Do you know [Person]?", "Who is [Person]?", "Connaissez-vous [Personne] ?"):
-  * If the Document Passages or Knowledge Graph contain information about this person or entity (such as their management role, customs broker license/agrément, office location, contact details, or provided services), explain who they are directly and completely.
-  * Never interpret "Do you know..." literally as an epistemological question about whether the AI or organization personally knows them. Answer with the facts found in the documentation and knowledge graph.
-
 1. COMPLETE MATCH:
 - Answer the user's query directly and authoritatively.
 - Synthesize information across both unstructured Document Passages and structured Graph Triples.
 - Maintain absolute fidelity: do NOT speculate, fabricate, or extrapolate beyond the verified facts.
-- Generate 2 to 3 intelligent, forward-looking suggestions in "follow_up_suggestions" that guide the user to explore deeper connections or adjacent services. Set "needs_clarification" to false.
+- Generate 2 to 3 intelligent, forward-looking suggestions in "follow_up_suggestions" that guide the user to explore deeper technical connections or adjacent systems. Set "needs_clarification" to false.
 
 2. PARTIAL MATCH:
-- Present the verified facts from the available Document Passages and Knowledge Graph cleanly.
-- Do NOT output internal technical phrases such as "relational graph dependencies" or ask artificial clarification questions when the core facts are already present.
-- Set "needs_clarification" to false if the core user question is answered by the available data.
+- State what IS confirmed by the available Document Passages or Graph Triples as a direct, complete, and authoritative answer to that portion of the question.
+- Do NOT add generic disclaimers or stall the response. Only append a brief note about what is missing if there is a specific, named gap in the records.
+- Populate "follow_up_suggestions" with intelligent forward-looking paths or adjacent topics the user can explore.
+- Set "needs_clarification" to true ONLY when the core of the user's question genuinely cannot be answered without additional input from the user (such as multiple competing ambiguous entities matched). If the verified facts sufficiently answer the user's question, set "needs_clarification" to false.
 
 3. ZERO MATCH OR LOW CONFIDENCE:
 - If no document passages meet the relevance threshold and no graph paths confirm the query:
@@ -176,18 +173,20 @@ class MockRAGSynthesizer(BaseRAGSynthesizer):
         # Case 1: COMPLETE MATCH (both chunks and graph edges present)
         if chunks and graph.edges:
             parts = []
-            edge_strs = [f"{e.source} {e.type.lower().replace('_', ' ')} {e.target}" for e in graph.edges]
+            edge_strs = [f"{e.source} {e.type.lower().replace('_', ' ')} {e.target}" for e in graph.edges[:6]]
             parts.append(f"According to the knowledge graph, {', and '.join(edge_strs)}.")
-            top_chunk = chunks[0]
-            snippet = top_chunk.content[:180].strip().replace("\n", " ")
-            parts.append(f"Referencing \"{top_chunk.source_name}\": {snippet}...")
+            chunk_snippets = []
+            for chk in chunks[:3]:
+                snippet = chk.content[:160].strip().replace("\n", " ")
+                chunk_snippets.append(f"From \"{chk.source_name}\": {snippet}")
+            parts.append(" ".join(chunk_snippets))
             if conversation_history:
                 parts.append(f"(Follow-up to previous {len(conversation_history)} messages)")
 
             answer = " ".join(parts)
             suggestions = [
                 f"Explore deeper dependencies for {graph.edges[0].target}",
-                f"Review operational architecture in {top_chunk.source_name}",
+                f"Review operational architecture in {chunks[0].source_name}",
             ]
             return SynthesisResult(
                 answer=answer,
@@ -198,16 +197,18 @@ class MockRAGSynthesizer(BaseRAGSynthesizer):
 
         # Case 2: PARTIAL MATCH (chunks without edges or edges without chunks)
         if chunks:
-            top_chunk = chunks[0]
-            snippet = top_chunk.content[:280].strip().replace("\n", " ")
-            answer = f"Based on your organization's documentation, referencing \"{top_chunk.source_name}\": {snippet}."
+            chunk_snippets = []
+            for chk in chunks[:3]:
+                snippet = chk.content[:160].strip().replace("\n", " ")
+                chunk_snippets.append(f"From \"{chk.source_name}\": {snippet}")
+            answer = f"Based on your organization's documentation: {' '.join(chunk_snippets)}."
             suggestions = [
-                f"Inspect documentation in {top_chunk.source_name}",
+                f"Inspect documentation in {chunks[0].source_name}",
                 "Explore related operational topics",
             ]
         else:
             edge_strs = [f"{e.source} {e.type.lower().replace('_', ' ')} {e.target}" for e in graph.edges[:6]]
-            answer = f"Based on your organization's documentation, the knowledge graph confirms {', and '.join(edge_strs)}."
+            answer = f"Based on your organization's knowledge graph: {', and '.join(edge_strs)}."
             suggestions = [
                 f"Explore neighborhood of {graph.edges[0].source}",
                 "Upload related documentation",
@@ -229,7 +230,7 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
 
     _quota_cooldown_until: float = 0.0
 
-    def __init__(self, api_key: str, model: str = "gemini-3.6-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-flash-lite-latest"):
         from google import genai
 
         self.client = genai.Client(api_key=api_key)
@@ -305,6 +306,7 @@ JSON RESPONSE:
             except Exception as e:
                 err_str = str(e)
                 if ("503" in err_str or "UNAVAILABLE" in err_str) and attempt == 0:
+                    logger.info("Gemini RAG synthesis encountered 503/UNAVAILABLE; retrying in 0.8s...")
                     await asyncio.sleep(0.8)
                     continue
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
@@ -438,13 +440,14 @@ class RAGPipelineService:
         graph_response = GraphNeighborhoodResponse()
         candidate_concepts = []
 
-        # If extractor or router didn't extract entities, fuzzy search tenant graph for candidate entities
+        # Fuzzy-entity fallback: if router/extractor detected no entities, search candidate entities via fuzzy match
         if not detected_entities:
             try:
                 candidate_ents = await graph_store.find_candidate_entities(
                     tenant_id=tenant_id, query=effective_query, limit=5
                 )
-                detected_entities = [c.name for c in candidate_ents]
+                if candidate_ents:
+                    detected_entities = [c.name for c in candidate_ents]
             except Exception as e:
                 logger.debug(f"Candidate entity search fallback failed: {e}")
 
@@ -457,7 +460,39 @@ class RAGPipelineService:
             )
             candidate_concepts = [n.name for n in graph_response.nodes if n.name not in detected_entities]
 
-        # In zero-match or low-confidence cases, engage Graph Disambiguation Specialist
+        # Step 3.5: Zero-match retry pass using top candidate entity before falling back to disambiguator
+        if not chunks and not graph_response.edges:
+            try:
+                candidates = await graph_store.find_candidate_entities(
+                    tenant_id=tenant_id, query=effective_query, limit=5
+                )
+                if candidates:
+                    top_candidate = candidates[0].name
+                    retry_query = f"{effective_query} {top_candidate}"
+                    retry_vector = await embedding_service.embed_query(retry_query)
+                    retry_chunks = await search_similar_chunks(
+                        db=db,
+                        tenant_id=tenant_id,
+                        query_vector=retry_vector,
+                        top_k=top_k_chunks,
+                        source_id=source_id,
+                    )
+                    retry_graph = await graph_store.get_neighborhood(
+                        tenant_id=tenant_id,
+                        entity_names=[top_candidate],
+                        max_hops=max_graph_hops,
+                        limit=25,
+                    )
+                    if retry_chunks or retry_graph.edges:
+                        chunks = retry_chunks
+                        graph_response = retry_graph
+                        if top_candidate not in detected_entities:
+                            detected_entities.append(top_candidate)
+                        candidate_concepts = [n.name for n in graph_response.nodes if n.name not in detected_entities]
+            except Exception as e:
+                logger.warning(f"Zero-match candidate retry notice: {e}")
+
+        # In zero-match or low-confidence cases (still empty after retry), engage Graph Disambiguation Specialist
         if not chunks and not graph_response.edges:
             try:
                 candidates = await graph_store.find_candidate_entities(

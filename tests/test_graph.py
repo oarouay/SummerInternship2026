@@ -76,6 +76,10 @@ async def test_in_memory_graph_store():
     assert "Hydra Auth" not in hop1_names
     assert len(hop1.edges) == 1
 
+    # Case-insensitive query check (e.g. lowercase "alice")
+    hop_case = await store.get_neighborhood(tenant_id=tenant_a, entity_names=["alice"], max_hops=1)
+    assert "Alice" in {n.name for n in hop_case.nodes}
+
     # 2-hop query from Alice
     hop2 = await store.get_neighborhood(tenant_id=tenant_a, entity_names=["Alice"], max_hops=2)
     hop2_names = {n.name for n in hop2.nodes}
@@ -138,12 +142,48 @@ async def test_neo4j_graph_store_if_available():
         assert "NeoNode1" in names
         assert "NeoNode2" in names
 
+        # Case-insensitive entity matching check (e.g. lowercase seed)
+        neigh_case = await store.get_neighborhood(test_tenant, ["neonode1"], max_hops=1)
+        names_case = {n.name for n in neigh_case.nodes}
+        assert "NeoNode1" in names_case
+
         # Tenant isolation check
         isolated = await store.get_neighborhood(tenant_id=88888, entity_names=["NeoNode1"], max_hops=1)
         assert len(isolated.nodes) == 0
     finally:
         await store.delete_tenant_graph(test_tenant)
         await store.driver.close()
+
+
+@pytest.mark.asyncio
+async def test_neo4j_case_insensitive_cypher_query():
+    """Verify Neo4jGraphStore.get_neighborhood includes case-insensitive matching in Cypher."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    store = Neo4jGraphStore(uri="bolt://localhost:7687", auth=("neo4j", "password"))
+    store._initialized = True
+
+    mock_session = MagicMock()
+    mock_result = MagicMock()
+
+    async def empty_async_gen():
+        if False:
+            yield None
+
+    mock_result.__aiter__.side_effect = empty_async_gen
+    mock_session.run = AsyncMock(return_value=mock_result)
+    mock_session.__aenter__.return_value = mock_session
+    mock_session.__aexit__.return_value = None
+
+    store.driver = MagicMock()
+    store.driver.session.return_value = mock_session
+
+    await store.get_neighborhood(tenant_id=1, entity_names=["my_entity"])
+
+    # Verify the Cypher executed contains the case-insensitive condition
+    assert mock_session.run.called
+    cypher_arg = mock_session.run.call_args[0][0]
+    assert "toLower(start.name) IN [x IN $entity_names | toLower(x)]" in cypher_arg
 
 
 @pytest.mark.asyncio

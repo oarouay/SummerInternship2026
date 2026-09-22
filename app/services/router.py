@@ -30,9 +30,7 @@ Output strictly valid JSON conforming to the requested schema.
     - "How to do customs clearance?" / "Comment faire le dédouanement ?"
     - "What documents are required?" / "Quels documents pour importer ?"
     - "What are the delays?" / "Quels sont les délais ?"
-    - "Do you know [Person]?" / "Connaissez-vous [Personne] ?" / "Who is [Person]?" / "Qui est [Personne] ?"
     MUST ALWAYS be classified as "retrieve"! The answers exist in the organization's indexed knowledge base and knowledge graph.
-  * When asking about a person or entity (e.g. "do you know X", "who is X"), reformulate "standalone_query" to: "Who is [Person] and what is their role, license, and information in the organization?" and extract [Person] into "seed_entities".
   * Populate "standalone_query" and extract appropriate "seed_entities" (e.g., the company name, service names, locations, document types).
   * Set "direct_or_clarification_message" to null and "clarification_options" to an empty list [].
 
@@ -45,11 +43,11 @@ Output strictly valid JSON conforming to the requested schema.
 - Populate "direct_or_clarification_message" with a polite, professional reply. Set "clarification_options" to []. Set "standalone_query" to null.
 
 3. "clarify":
-- RESERVED ONLY for brief, isolated, ambiguous single-word fragments or technical commands lacking any domain subject (e.g., "deploy", "check logs", "fix bug", "logs") where it is impossible to know what system is meant.
-- Do NOT use "clarify" for natural questions like "Comment faire... ?" or "Quels documents... ?" because the organization's documents contain the comprehensive answer.
+- RESERVED for broad, critically underspecified, or ambiguous queries across multiple systems/topics (e.g., "How do I deploy?", "Show me the logs", "check logs", "deploy", "fix bug", "logs") where the specific target system or environment is unknown. Rather than guessing, pause retrieval to ask a clarifying question.
+- Do NOT use "clarify" for natural questions like "Comment faire le dédouanement ?" or "Quels documents pour importer ?" because the organization's documents contain the comprehensive answer.
 - When action is "clarify", you MUST:
   * Write a concise message explaining the ambiguity in "direct_or_clarification_message".
-  * Provide 2 to 4 brief, clickable choices in "clarification_options" (e.g., ["Production Logs", "API Logs", "Audit Logs"]). This field MUST NOT be empty.
+  * Provide 2 to 4 brief, clickable choices in "clarification_options" (e.g., ["Production Web Deploy", "Staging Deploy", "CI/CD Pipeline"]). This field MUST NOT be empty.
   * Set "standalone_query" to null.
 
 ### Multi-Turn Coreference Resolution:
@@ -181,15 +179,6 @@ class MockConversationalRouter(BaseConversationalRouter):
         standalone = clean_q
         detected_entities = []
 
-        # Check for conversational person/entity inquiries ("do you know X", "who is X", "connaissez-vous X")
-        inquiry_match = re.match(r"^(?:do\s+you\s+know|who\s+is|connaissez-vous|c'est\s+qui|qui\s+est)\s+(.+)$", clean_q, re.IGNORECASE)
-        if inquiry_match:
-            raw_target = inquiry_match.group(1).strip().rstrip("?.! ")
-            if raw_target:
-                target_title = raw_target.title()
-                standalone = f"Who is {target_title} and what is their role, license, and information?"
-                detected_entities.append(target_title)
-
         # Find entities in history to resolve pronouns, prioritizing user turns
         history_entities = []
         if conversation_history:
@@ -262,7 +251,7 @@ class GeminiConversationalRouter(BaseConversationalRouter):
     and extract seed entities.
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-3.6-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
         from google import genai
 
         self.client = genai.Client(api_key=api_key)
