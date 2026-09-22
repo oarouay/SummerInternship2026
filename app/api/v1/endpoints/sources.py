@@ -1,6 +1,6 @@
 from typing import List
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -32,14 +32,29 @@ async def list_sources(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Retrieve all data sources scoped strictly to the current tenant."""
+    """Retrieve all data sources scoped strictly to the current tenant with accurate chunk counts."""
+    count_subq = (
+        select(DocumentChunk.source_id, func.count(DocumentChunk.id).label("chunk_count"))
+        .where(DocumentChunk.tenant_id == tenant.id)
+        .group_by(DocumentChunk.source_id)
+        .subquery()
+    )
+
     stmt = (
-        select(Source)
+        select(Source, func.coalesce(count_subq.c.chunk_count, 0).label("chunk_count"))
+        .outerjoin(count_subq, Source.id == count_subq.c.source_id)
         .where(Source.tenant_id == tenant.id)
         .order_by(Source.created_at.desc())
     )
     result = await db.execute(stmt)
-    return result.scalars().all()
+    rows = result.all()
+
+    sources = []
+    for src, c_count in rows:
+        src_res = SourceResponse.model_validate(src)
+        src_res.chunk_count = c_count
+        sources.append(src_res)
+    return sources
 
 
 @router.post(
@@ -186,7 +201,14 @@ async def get_source(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Source not found within your organization."
         )
-    return source
+
+    chunk_stmt = select(func.count(DocumentChunk.id)).where(
+        DocumentChunk.source_id == source.id, DocumentChunk.tenant_id == tenant.id
+    )
+    c_count = (await db.execute(chunk_stmt)).scalar() or 0
+    src_res = SourceResponse.model_validate(source)
+    src_res.chunk_count = c_count
+    return src_res
 
 
 @router.get(

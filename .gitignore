@@ -40,3 +40,7 @@ Thumbs.db
 # Storage / Uploads
 uploads/
 
+# Tooling & Assistant Caches
+.claude/
+.aider-desk/
+skills-lock.json

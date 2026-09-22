@@ -58,6 +58,10 @@ class ConversationCreate(BaseModel):
     title: Optional[str] = Field(default="New Conversation", max_length=200)
 
 
+class ConversationUpdate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200, description="Updated session title")
+
+
 class ConversationListItem(BaseModel):
     id: int
     tenant_id: int

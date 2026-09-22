@@ -205,6 +205,13 @@ export const chatApi = {
     });
   },
 
+  async renameConversation(id, title) {
+    return request(`/chat/conversations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    });
+  },
+
   async deleteConversation(id) {
     return request(`/chat/conversations/${id}`, {
       method: 'DELETE',

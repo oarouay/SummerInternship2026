@@ -16,6 +16,7 @@ from app.schemas.conversation import (
     ChatMessageRead,
     ChatMessageSendRequest,
     ConversationCreate,
+    ConversationUpdate,
     ConversationListItem,
     ConversationRead,
     PublicChatMessageRequest,
@@ -243,6 +244,45 @@ async def send_chat_message(
     await db.refresh(assistant_msg)
 
     return ChatMessageRead.from_orm_with_citations(assistant_msg)
+
+
+@router.patch(
+    "/conversations/{conversation_id}",
+    response_model=ConversationListItem,
+    summary="Rename a conversation session"
+)
+async def rename_conversation(
+    conversation_id: int,
+    payload: ConversationUpdate,
+    tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Rename a conversation title, strictly validating tenant ownership."""
+    stmt = select(Conversation).where(
+        Conversation.id == conversation_id,
+        Conversation.tenant_id == tenant.id
+    )
+    res = await db.execute(stmt)
+    conv = res.scalar_one_or_none()
+    if not conv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found in your organization."
+        )
+
+    conv.title = payload.title.strip()
+    await db.commit()
+    await db.refresh(conv)
+
+    return ConversationListItem(
+        id=conv.id,
+        tenant_id=conv.tenant_id,
+        title=conv.title,
+        created_at=conv.created_at,
+        updated_at=conv.updated_at,
+        message_count=0
+    )
 
 
 @router.delete(
