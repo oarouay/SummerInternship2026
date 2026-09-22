@@ -646,7 +646,7 @@ export default function ChatStudio() {
 
             {sending && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '12px' }}>
-                <span className="telemetry-dot online"></span>
+                <Sparkles size={13} style={{ color: 'var(--accent-primary)', animation: 'pulse 1.5s ease-in-out infinite' }} />
                 <span>Fusing vector passages and graph triples...</span>
               </div>
             )}

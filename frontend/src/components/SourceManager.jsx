@@ -8,7 +8,8 @@ import {
   Trash2, 
   Eye, 
   AlertCircle, 
-  CheckCircle2, 
+  CheckCircle2,
+  Check, 
   Clock, 
   X,
   Database,
@@ -155,7 +156,7 @@ export default function SourceManager() {
     if (status === 'completed' || status === 'indexed') {
       return (
         <span className="status-pill indexed">
-          <span className="telemetry-dot online" style={{ width: '5px', height: '5px' }}></span>
+          <Check size={11} />
           <span>Indexed</span>
         </span>
       );

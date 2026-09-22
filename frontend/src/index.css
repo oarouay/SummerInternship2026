@@ -67,7 +67,7 @@ body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
+  overflow: hidden;
 }
 
 #root {
@@ -312,7 +312,8 @@ textarea::placeholder {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 76px);
+  min-height: 0;
+  overflow-y: auto;
   padding: 24px 32px;
   max-width: 1600px;
   width: 100%;
@@ -514,4 +515,10 @@ textarea::placeholder {
   justify-content: center;
   color: var(--accent-primary);
   margin-bottom: 16px;
+}
+
+/* Pulse animation for loading indicators */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }

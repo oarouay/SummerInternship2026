@@ -150,9 +150,9 @@ export default function ChatbotSettings({ tenant }) {
   };
 
   return (
-    <div className="workspace-page">
+    <div className="workspace-page" style={{ padding: '20px 32px' }}>
       {/* Workspace Header */}
-      <div className="workspace-header">
+      <div className="workspace-header" style={{ marginBottom: '16px' }}>
         <div>
           <h1 className="workspace-title">
             <SettingsIcon size={20} color="var(--accent-primary)" />
@@ -184,7 +184,7 @@ export default function ChatbotSettings({ tenant }) {
 
       {/* Sub-Tab 1: Persona Tuning & LLM Engine Form */}
       {activeSubTab === 'persona' && (
-        <form onSubmit={handleSaveSettings} className="glass-panel" style={{ padding: '24px', maxWidth: '840px' }}>
+        <form onSubmit={handleSaveSettings} className="glass-panel" style={{ padding: '20px', maxWidth: '840px' }}>
           {saveSuccess && (
             <div style={{
               background: 'var(--accent-emerald-subtle)',
@@ -242,12 +242,12 @@ export default function ChatbotSettings({ tenant }) {
             />
           </div>
 
-          <div style={{ marginBottom: '22px' }}>
+          <div style={{ marginBottom: '14px' }}>
             <label style={{ fontSize: '11.5px', color: 'var(--text-secondary)', marginBottom: '5px', display: 'block' }}>
               Custom System Directives
             </label>
             <textarea
-              rows={4}
+              rows={3}
               placeholder="e.g. You are the AI architecture guide for our enterprise stack. Always highlight security implications..."
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
@@ -257,10 +257,10 @@ export default function ChatbotSettings({ tenant }) {
           {/* LLM Engine & Google Gemini API Key Panel */}
           <div style={{
             background: 'var(--bg-surface-2)',
-            padding: '16px',
+            padding: '14px',
             borderRadius: '8px',
             border: '1px solid var(--border-hairline)',
-            marginBottom: '22px'
+            marginBottom: '14px'
           }}>
             <div style={{ 
               display: 'flex', 
@@ -438,10 +438,10 @@ export default function ChatbotSettings({ tenant }) {
           {/* Hyperparameters Configuration */}
           <div style={{
             background: 'var(--bg-surface-2)',
-            padding: '16px',
+            padding: '14px',
             borderRadius: '8px',
             border: '1px solid var(--border-hairline)',
-            marginBottom: '22px'
+            marginBottom: '14px'
           }}>
             <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 600, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '5px' }}>
               <Sliders size={13} />

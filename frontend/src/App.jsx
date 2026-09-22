@@ -6,7 +6,7 @@ import SourceManager from './components/SourceManager';
 import ChatbotSettings from './components/ChatbotSettings';
 import AuthModal from './components/AuthModal';
 import { authApi, getStoredToken } from './api/client';
-import { Sparkles, ShieldCheck, Database, Terminal } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('sources');
@@ -49,7 +49,7 @@ export default function App() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-canvas)' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-canvas)', overflow: 'hidden' }}>
       {/* Integrated Top Navigation */}
       <Navbar
         activeTab={activeTab}
@@ -61,10 +61,9 @@ export default function App() {
       />
 
       {/* Main Workspace Canvas */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
         {initializing ? (
           <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)' }}>
-            <div className="telemetry-dot online" style={{ width: '10px', height: '10px', marginBottom: '12px' }}></div>
             <div style={{ fontSize: '12.5px' }}>Connecting to GraphRAG Cluster...</div>
           </div>
         ) : !tenant ? (
@@ -105,34 +104,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Bottom Minimalist Telemetry Status Bar */}
-      <footer style={{
-        height: '24px',
-        background: 'var(--bg-surface-1)',
-        borderTop: '1px solid var(--border-hairline)',
-        padding: '0 16px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        fontSize: '11px',
-        color: 'var(--text-muted)',
-        zIndex: 40
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-            <span className="telemetry-dot online"></span>
-            <span>RLS Isolation Active</span>
-          </span>
-          <span>·</span>
-          <span>Model: <strong style={{ color: 'var(--text-secondary)' }}>gemini-flash-lite-latest</strong></span>
-        </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span>PostgreSQL <span className="tabular-nums">17 + pgvector</span></span>
-          <span>·</span>
-          <span>Neo4j <span className="tabular-nums">5.26</span></span>
-        </div>
-      </footer>
 
       {/* Auth Modal */}
       <AuthModal

@@ -98,23 +98,8 @@ export default function Navbar({
         })}
       </nav>
 
-      {/* Right: Consolidated System Status & Profile */}
+      {/* Right: Profile */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '6px',
-          background: 'rgba(16, 185, 129, 0.08)',
-          border: '1px solid rgba(16, 185, 129, 0.2)',
-          padding: '4px 10px',
-          borderRadius: '16px',
-          fontSize: '11px',
-          color: '#34D399',
-          fontWeight: 500
-        }}>
-          <span className="telemetry-dot online" style={{ width: '6px', height: '6px' }}></span>
-          <span>Cluster Active</span>
-        </div>
 
         {/* Tenant Profile Dropdown */}
         {tenant && user ? (
