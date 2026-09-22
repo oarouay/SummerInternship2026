@@ -12,42 +12,56 @@ logger = logging.getLogger(__name__)
 
 ROUTING_SYSTEM_INSTRUCTION = """
 You are the Conversational Routing Engine for an enterprise knowledge and search platform.
-Your primary objective is to inspect the latest user message alongside the conversation history, resolve ambiguity and references, and determine the optimal execution path.
+Your objective is to inspect the latest user message alongside the conversation history, resolve ambiguity, and determine whether to RETRIEVE information from the knowledge base, CLARIFY an ambiguous command, or provide a DIRECT conversational greeting/closing.
 
 Output strictly valid JSON conforming to the requested schema.
 
-### Core Responsibilities:
+### Core Rules for Intent Classification ("action"):
 
-1. INTENT CLASSIFICATION & ACTION SELECTION
-Assign exactly one value to "action":
-- "direct_response": The user is greeting, expressing gratitude, initiating chitchat, or requesting conversational closing (e.g., "Hi", "Thanks", "Goodbye"). Retrieval is unnecessary.
-- "clarify": The user's query is broad, critically underspecified, or ambiguous across multiple systems/topics (e.g., "How do I deploy?", "Show me the logs", "Fix the bug"). Rather than guessing or querying the database blindly, pause retrieval to ask a clarifying question.
-- "retrieve": The query contains sufficient domain specificity, or is a focused follow-up question that can be answered via document and graph retrieval.
+1. "retrieve" (PRIMARY & DEFAULT ACTION for questions):
+- Choose "retrieve" whenever the user is asking ANY question or seeking information, facts, contact methods, services, procedures, pricing, or locations.
+- CRITICAL DOMAIN SCOPING:
+  * Pronouns like "you", "your", "vous", "votre" refer to the HOST ORGANIZATION / COMPANY whose knowledge base is indexed, NOT the AI software model.
+  * Inquiries such as:
+    - "Who are you?" / "Qui êtes-vous ?" / "C'est quoi ce site ?" / "Vous faites quoi ?"
+    - "What are your services?" / "Quels sont vos services ?"
+    - "Where are you located?" / "Où êtes-vous situés ?" / "Vos bureaux ?"
+    - "How can I contact you?" / "Comment vous contacter ?" / "Téléphone / Email"
+    - "How to do customs clearance?" / "Comment faire le dédouanement ?"
+    - "What documents are required?" / "Quels documents pour importer ?"
+    - "What are the delays?" / "Quels sont les délais ?"
+    MUST ALWAYS be classified as "retrieve"! The answers exist in the organization's indexed knowledge base and knowledge graph.
+  * Populate "standalone_query" and extract appropriate "seed_entities" (e.g., the company name, service names, locations, document types).
+  * Set "direct_or_clarification_message" to null and "clarification_options" to an empty list [].
 
-2. MULTI-TURN COREFERENCE RESOLUTION
-- When action is "retrieve", rewrite the user's latest message into "standalone_query".
-- Replace every pronoun ("it", "they", "that tool", "his project", "the previous version") and implicit context with explicit entity names derived from the conversation history.
-- Example: 
-  History: User: "Tell me about Project Titan." Assistant: "Project Titan is an auth service." User: "Is it secure?"
-  Standalone Query: "What security vulnerabilities or features exist for Project Titan?"
-- If action is NOT "retrieve", set "standalone_query" to null.
+2. "direct_response":
+- STRICTLY RESERVED for pure conversational pleasantries containing NO inquiry, question, or request for information:
+  * Pure greetings: "Hi", "Hello", "Bonjour", "Hey"
+  * Pure gratitude: "Thanks", "Thank you", "Merci", "Merci beaucoup"
+  * Pure closings: "Goodbye", "Bye", "Au revoir", "Bonne journée"
+- DO NOT use "direct_response" if the message asks ANY question or seeks ANY information about the company, services, or procedures.
+- Populate "direct_or_clarification_message" with a polite, professional reply. Set "clarification_options" to []. Set "standalone_query" to null.
 
-3. SEED ENTITY EXTRACTION
-- When action is "retrieve", populate "seed_entities" with high-value domain nouns, system titles, code repos, technologies, people, or standards extracted from "standalone_query".
-- Normalize casing (Title Case for systems/people, UPPERCASE for acronyms). Do not extract stop words, verbs, or generic terms like "information", "details", or "user".
+3. "clarify":
+- RESERVED ONLY for brief, isolated, ambiguous single-word fragments or technical commands lacking any domain subject (e.g., "deploy", "check logs", "fix bug", "logs") where it is impossible to know what system is meant.
+- Do NOT use "clarify" for natural questions like "Comment faire... ?" or "Quels documents... ?" because the organization's documents contain the comprehensive answer.
+- When action is "clarify", you MUST:
+  * Write a concise message explaining the ambiguity in "direct_or_clarification_message".
+  * Provide 2 to 4 brief, clickable choices in "clarification_options" (e.g., ["Production Logs", "API Logs", "Audit Logs"]). This field MUST NOT be empty.
+  * Set "standalone_query" to null.
 
-4. CLARIFICATION & GUIDANCE OPTIONS
-- If action is "clarify":
-  * Write a concise, courteous message directly to the user in "direct_or_clarification_message" explaining the ambiguity and asking them to choose an area.
-  * Provide 2 to 4 brief, clickable choices in "clarification_options" (e.g., ["Production Web Deploy", "Staging Mobile Deploy", "CI/CD Pipeline"]).
-- If action is "direct_response":
-  * Populate "direct_or_clarification_message" with a polite, professional reply. Set "clarification_options" to an empty list.
-- If action is "retrieve":
-  * Set "direct_or_clarification_message" to null and "clarification_options" to an empty list.
+### Multi-Turn Coreference Resolution:
+- When action is "retrieve", rewrite the user's latest message into "standalone_query", replacing pronouns ("it", "they", "il", "elle") with explicit entities from history.
+- When action is NOT "retrieve", set "standalone_query" to null.
 
-### Constraints:
-- Do not assume missing information. If a query could reasonably match multiple distinct tenant domains, prioritize "clarify".
-- Strictly avoid conversational preamble in the JSON. Output only structured data.
+### Output JSON Format:
+{
+  "action": "retrieve" | "direct_response" | "clarify",
+  "standalone_query": string or null,
+  "seed_entities": [string],
+  "direct_or_clarification_message": string or null,
+  "clarification_options": [string]
+}
 """
 
 
@@ -58,7 +72,9 @@ class BaseConversationalRouter(ABC):
     async def route(
         self,
         query: str,
-        conversation_history: Optional[List[dict]] = None
+        conversation_history: Optional[List[dict]] = None,
+        tenant_name: Optional[str] = None,
+        custom_system_prompt: Optional[str] = None,
     ) -> ConversationalRouteResult:
         """Inspects query and conversation history to determine action and execution parameters."""
         pass
@@ -98,31 +114,40 @@ class MockConversationalRouter(BaseConversationalRouter):
     async def route(
         self,
         query: str,
-        conversation_history: Optional[List[dict]] = None
+        conversation_history: Optional[List[dict]] = None,
+        tenant_name: Optional[str] = None,
+        custom_system_prompt: Optional[str] = None,
     ) -> ConversationalRouteResult:
         start_time = time.perf_counter()
         clean_q = query.strip()
         lower_q = clean_q.lower()
 
-        # 1. Direct response check (greetings, thanks, closings)
-        for pattern in self.GREETING_PATTERNS:
-            if re.search(pattern, lower_q, re.IGNORECASE):
-                if any(k in lower_q for k in ["thanks", "thank", "appreciate", "thx"]):
-                    msg = "You are very welcome! Let me know if you need anything else from our knowledge base."
-                elif any(k in lower_q for k in ["bye", "goodbye", "farewell"]):
-                    msg = "Goodbye! Have a great day ahead."
-                else:
-                    msg = "Hello! How can I assist you with your organization's knowledge base today?"
+        # Inquiries should never be treated as direct response greetings
+        has_inquiry_cue = any(k in lower_q for k in [
+            "?", "qui", "quoi", "comment", "où", "ou", "quel", "quels", "quelle", "quelles",
+            "how", "what", "where", "service", "contact", "phone", "email", "tarif", "delai", "délai", "document"
+        ])
 
-                elapsed = round((time.perf_counter() - start_time) * 1000, 2)
-                return ConversationalRouteResult(
-                    action=RouterAction.DIRECT_RESPONSE,
-                    standalone_query=None,
-                    seed_entities=[],
-                    direct_or_clarification_message=msg,
-                    clarification_options=[],
-                    execution_time_ms=elapsed,
-                )
+        # 1. Direct response check (pure greetings, thanks, closings)
+        if not has_inquiry_cue:
+            for pattern in self.GREETING_PATTERNS:
+                if re.search(pattern, lower_q, re.IGNORECASE):
+                    if any(k in lower_q for k in ["thanks", "thank", "appreciate", "thx"]):
+                        msg = "You are very welcome! Let me know if you need anything else from our knowledge base."
+                    elif any(k in lower_q for k in ["bye", "goodbye", "farewell"]):
+                        msg = "Goodbye! Have a great day ahead."
+                    else:
+                        msg = "Hello! How can I assist you with your organization's knowledge base today?"
+
+                    elapsed = round((time.perf_counter() - start_time) * 1000, 2)
+                    return ConversationalRouteResult(
+                        action=RouterAction.DIRECT_RESPONSE,
+                        standalone_query=None,
+                        seed_entities=[],
+                        direct_or_clarification_message=msg,
+                        clarification_options=[],
+                        execution_time_ms=elapsed,
+                    )
 
         # 2. Clarification check (broad or underspecified queries)
         for pattern in self.AMBIGUOUS_PATTERNS:
@@ -236,7 +261,9 @@ class GeminiConversationalRouter(BaseConversationalRouter):
     async def route(
         self,
         query: str,
-        conversation_history: Optional[List[dict]] = None
+        conversation_history: Optional[List[dict]] = None,
+        tenant_name: Optional[str] = None,
+        custom_system_prompt: Optional[str] = None,
     ) -> ConversationalRouteResult:
         start_time = time.perf_counter()
 
@@ -245,9 +272,16 @@ class GeminiConversationalRouter(BaseConversationalRouter):
             recent_turns = conversation_history[-6:]
             history_str = "\n".join([f"{msg.get('role', 'user').capitalize()}: {msg.get('content', '')}" for msg in recent_turns])
 
+        context_lines = []
+        if tenant_name:
+            context_lines.append(f"Target Organization / Company: {tenant_name}")
+        if custom_system_prompt:
+            context_lines.append(f"Organization Directives / Persona: {custom_system_prompt}")
+        context_block = ("\n" + "\n".join(context_lines) + "\n") if context_lines else ""
+
         prompt = f"""
 {ROUTING_SYSTEM_INSTRUCTION}
-
+{context_block}
 CONVERSATION HISTORY:
 {history_str}
 
@@ -274,20 +308,35 @@ JSON RESPONSE:
             except ValueError:
                 action_enum = RouterAction.RETRIEVE
 
+            clarification_opts = data.get("clarification_options", []) if action_enum == RouterAction.CLARIFY else []
+            if action_enum == RouterAction.CLARIFY and not clarification_opts:
+                mock_res = await self.mock_fallback.route(
+                    query=query,
+                    conversation_history=conversation_history,
+                    tenant_name=tenant_name,
+                    custom_system_prompt=custom_system_prompt,
+                )
+                clarification_opts = mock_res.clarification_options or ["Overview & Capabilities", "Specific Services", "Contact & Locations"]
+
             elapsed = round((time.perf_counter() - start_time) * 1000, 2)
             return ConversationalRouteResult(
                 action=action_enum,
                 standalone_query=data.get("standalone_query") if action_enum == RouterAction.RETRIEVE else None,
                 seed_entities=data.get("seed_entities", []) if action_enum == RouterAction.RETRIEVE else [],
                 direct_or_clarification_message=data.get("direct_or_clarification_message"),
-                clarification_options=data.get("clarification_options", []) if action_enum == RouterAction.CLARIFY else [],
+                clarification_options=clarification_opts,
                 execution_time_ms=elapsed,
             )
         except Exception as exc:
             logger.warning(
                 f"[ConversationalRouter] Gemini routing failed ({exc}). Falling back to rule-based router."
             )
-            return await self.mock_fallback.route(query, conversation_history)
+            return await self.mock_fallback.route(
+                query=query,
+                conversation_history=conversation_history,
+                tenant_name=tenant_name,
+                custom_system_prompt=custom_system_prompt,
+            )
 
 
 def get_conversational_router(api_key: Optional[str] = None) -> BaseConversationalRouter:

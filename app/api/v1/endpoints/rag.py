@@ -38,5 +38,6 @@ async def query_graphrag(
         top_k_chunks=payload.top_k_chunks,
         max_graph_hops=payload.max_graph_hops,
         temperature=payload.temperature,
-        source_id=payload.source_id
+        source_id=payload.source_id,
+        tenant_name=tenant.name,
     )

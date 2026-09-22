@@ -361,15 +361,32 @@ class RAGPipelineService:
         persona_tone: Optional[str] = None,
         custom_system_prompt: Optional[str] = None,
         gemini_api_key: Optional[str] = None,
+        tenant_name: Optional[str] = None,
     ) -> RAGQueryResponse:
         start_time = time.perf_counter()
 
         # Step 0: Conversational Routing & Intent Classification
         router = get_conversational_router(api_key=gemini_api_key)
-        route_res = await router.route(query=query, conversation_history=conversation_history)
+        route_res = await router.route(
+            query=query,
+            conversation_history=conversation_history,
+            tenant_name=tenant_name,
+            custom_system_prompt=custom_system_prompt,
+        )
 
-        # Early exit for direct responses (greetings, closings, thanks) without retrieval overhead
-        if route_res.action == RouterAction.DIRECT_RESPONSE:
+        # Safety net: Questions or informational requests must NEVER be swallowed as direct_response
+        inquiry_markers = [
+            "?", "qui", "quoi", "comment", "où", "ou", "quel", "quels", "quelle", "quelles",
+            "combien", "pourquoi", "est-ce", "pouvez-vous", "avez-vous",
+            "who", "what", "where", "how", "when", "why", "which", "can", "could", "would",
+            "contact", "adresse", "service", "phone", "telephone", "téléphone", "tel", "mail", "email",
+            "tarif", "prix", "cout", "coût", "délai", "delai", "document", "dédouanement", "dedouanement"
+        ]
+        lower_query = query.lower().strip()
+        has_inquiry = any(marker in lower_query for marker in inquiry_markers)
+
+        # Early exit for direct responses ONLY if it's truly a pure greeting/closing without an inquiry
+        if route_res.action == RouterAction.DIRECT_RESPONSE and not has_inquiry:
             elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
             return RAGQueryResponse(
                 query=query,

@@ -211,6 +211,7 @@ async def send_chat_message(
         persona_tone=tone,
         custom_system_prompt=sys_prompt,
         gemini_api_key=config.gemini_api_key if config else None,
+        tenant_name=tenant.name,
     )
 
     # 6. Save Assistant response with citations and router action
@@ -388,6 +389,7 @@ async def public_chat_message(
         persona_tone=tone,
         custom_system_prompt=sys_prompt,
         gemini_api_key=config.gemini_api_key if config else None,
+        tenant_name=tenant.name,
     )
 
     return rag_response
