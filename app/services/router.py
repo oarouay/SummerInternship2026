@@ -30,7 +30,9 @@ Output strictly valid JSON conforming to the requested schema.
     - "How to do customs clearance?" / "Comment faire le dédouanement ?"
     - "What documents are required?" / "Quels documents pour importer ?"
     - "What are the delays?" / "Quels sont les délais ?"
+    - "Do you know [Person]?" / "Connaissez-vous [Personne] ?" / "Who is [Person]?" / "Qui est [Personne] ?"
     MUST ALWAYS be classified as "retrieve"! The answers exist in the organization's indexed knowledge base and knowledge graph.
+  * When asking about a person or entity (e.g. "do you know X", "who is X"), reformulate "standalone_query" to: "Who is [Person] and what is their role, license, and information in the organization?" and extract [Person] into "seed_entities".
   * Populate "standalone_query" and extract appropriate "seed_entities" (e.g., the company name, service names, locations, document types).
   * Set "direct_or_clarification_message" to null and "clarification_options" to an empty list [].
 
@@ -179,6 +181,15 @@ class MockConversationalRouter(BaseConversationalRouter):
         standalone = clean_q
         detected_entities = []
 
+        # Check for conversational person/entity inquiries ("do you know X", "who is X", "connaissez-vous X")
+        inquiry_match = re.match(r"^(?:do\s+you\s+know|who\s+is|connaissez-vous|c'est\s+qui|qui\s+est)\s+(.+)$", clean_q, re.IGNORECASE)
+        if inquiry_match:
+            raw_target = inquiry_match.group(1).strip().rstrip("?.! ")
+            if raw_target:
+                target_title = raw_target.title()
+                standalone = f"Who is {target_title} and what is their role, license, and information?"
+                detected_entities.append(target_title)
+
         # Find entities in history to resolve pronouns, prioritizing user turns
         history_entities = []
         if conversation_history:
@@ -251,7 +262,7 @@ class GeminiConversationalRouter(BaseConversationalRouter):
     and extract seed entities.
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3.6-flash"):
         from google import genai
 
         self.client = genai.Client(api_key=api_key)

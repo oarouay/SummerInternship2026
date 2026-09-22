@@ -405,7 +405,7 @@ class Neo4jGraphStore(BaseGraphStore):
         if entity_names:
             cypher = f"""
             MATCH (start:Entity {{tenant_id: $tenant_id}})
-            WHERE start.name IN $entity_names
+            WHERE start.name IN $entity_names OR toLower(start.name) IN [x IN $entity_names | toLower(x)]
             OPTIONAL MATCH path = (start)-[r:RELATION*1..{max_hops}]-(connected:Entity {{tenant_id: $tenant_id}})
             RETURN start, path
             LIMIT $limit
@@ -568,7 +568,10 @@ class Neo4jGraphStore(BaseGraphStore):
         LIMIT $limit
         """
         async with self.driver.session() as session:
-            result = await session.run(cypher, tenant_id=tenant_id, query=clean_query, limit=limit)
+            result = await session.run(
+                cypher,
+                parameters={"tenant_id": tenant_id, "query": clean_query, "limit": limit}
+            )
             records = [rec async for rec in result]
 
         return [

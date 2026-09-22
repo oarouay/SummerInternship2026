@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -34,17 +35,20 @@ Output strictly valid JSON matching the requested schema.
 
 ### Context Handling Rules:
 
+- Inquiries About People, Leadership, or Entities (e.g., "Do you know [Person]?", "Who is [Person]?", "Connaissez-vous [Personne] ?"):
+  * If the Document Passages or Knowledge Graph contain information about this person or entity (such as their management role, customs broker license/agrément, office location, contact details, or provided services), explain who they are directly and completely.
+  * Never interpret "Do you know..." literally as an epistemological question about whether the AI or organization personally knows them. Answer with the facts found in the documentation and knowledge graph.
+
 1. COMPLETE MATCH:
 - Answer the user's query directly and authoritatively.
 - Synthesize information across both unstructured Document Passages and structured Graph Triples.
 - Maintain absolute fidelity: do NOT speculate, fabricate, or extrapolate beyond the verified facts.
-- Generate 2 to 3 intelligent, forward-looking suggestions in "follow_up_suggestions" that guide the user to explore deeper technical connections or adjacent systems. Set "needs_clarification" to false.
+- Generate 2 to 3 intelligent, forward-looking suggestions in "follow_up_suggestions" that guide the user to explore deeper connections or adjacent services. Set "needs_clarification" to false.
 
 2. PARTIAL MATCH:
-- Delineate what the knowledge base confirms versus what is missing.
-- Format: "Based on your organization's documentation, [confirmed facts]. However, the records do not detail [missing specific aspect]."
-- Ask a focused clarifying question at the end of your response to help resolve the missing aspect.
-- Populate "follow_up_suggestions" with specific paths the user can take based on the available data. Set "needs_clarification" to true.
+- Present the verified facts from the available Document Passages and Knowledge Graph cleanly.
+- Do NOT output internal technical phrases such as "relational graph dependencies" or ask artificial clarification questions when the core facts are already present.
+- Set "needs_clarification" to false if the core user question is answered by the available data.
 
 3. ZERO MATCH OR LOW CONFIDENCE:
 - If no document passages meet the relevance threshold and no graph paths confirm the query:
@@ -195,23 +199,15 @@ class MockRAGSynthesizer(BaseRAGSynthesizer):
         # Case 2: PARTIAL MATCH (chunks without edges or edges without chunks)
         if chunks:
             top_chunk = chunks[0]
-            snippet = top_chunk.content[:180].strip().replace("\n", " ")
-            answer = (
-                f"Based on your organization's documentation, referencing \"{top_chunk.source_name}\": {snippet}. "
-                f"However, the records do not detail the relational graph dependencies for '{query}'. "
-                f"Which specific component or sub-aspect would you like to clarify?"
-            )
+            snippet = top_chunk.content[:280].strip().replace("\n", " ")
+            answer = f"Based on your organization's documentation, referencing \"{top_chunk.source_name}\": {snippet}."
             suggestions = [
                 f"Inspect documentation in {top_chunk.source_name}",
-                "Clarify specific architecture or subcomponent",
+                "Explore related operational topics",
             ]
         else:
-            edge_strs = [f"{e.source} {e.type.lower().replace('_', ' ')} {e.target}" for e in graph.edges]
-            answer = (
-                f"Based on your organization's documentation, the knowledge graph confirms {', and '.join(edge_strs)}. "
-                f"However, the records do not detail textual documentation passages for '{query}'. "
-                f"Would you like to inspect the connected systems?"
-            )
+            edge_strs = [f"{e.source} {e.type.lower().replace('_', ' ')} {e.target}" for e in graph.edges[:6]]
+            answer = f"Based on your organization's documentation, the knowledge graph confirms {', and '.join(edge_strs)}."
             suggestions = [
                 f"Explore neighborhood of {graph.edges[0].source}",
                 "Upload related documentation",
@@ -220,7 +216,7 @@ class MockRAGSynthesizer(BaseRAGSynthesizer):
         return SynthesisResult(
             answer=answer,
             follow_up_suggestions=suggestions,
-            needs_clarification=True,
+            needs_clarification=False,
             match_type="partial",
         )
 
@@ -233,7 +229,7 @@ class GeminiRAGSynthesizer(BaseRAGSynthesizer):
 
     _quota_cooldown_until: float = 0.0
 
-    def __init__(self, api_key: str, model: str = "gemini-flash-lite-latest"):
+    def __init__(self, api_key: str, model: str = "gemini-3.6-flash"):
         from google import genai
 
         self.client = genai.Client(api_key=api_key)
@@ -282,42 +278,46 @@ USER QUESTION:
 JSON RESPONSE:
 """
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": SynthesisResult,
-                    "temperature": temperature,
-                }
-            )
-            raw_json = response.text.strip()
-            if raw_json.startswith("```json"):
-                raw_json = raw_json[7:]
-            if raw_json.endswith("```"):
-                raw_json = raw_json[:-3]
-            data = json.loads(raw_json.strip())
-            resolved_answer = data.get("answer") or data.get("response") or data.get("content") or ""
-            return SynthesisResult(
-                answer=resolved_answer,
-                follow_up_suggestions=data.get("follow_up_suggestions", []),
-                needs_clarification=data.get("needs_clarification", False),
-                match_type=data.get("match_type", "complete"),
-            )
-        except Exception as e:
-            err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                GeminiRAGSynthesizer._quota_cooldown_until = time.time() + 60.0
-                logger.warning(
-                    f"Gemini RAG synthesis hit quota limit (429 RESOURCE_EXHAUSTED) for model '{self.model}'. "
-                    "Enabling 60s cooldown and falling back to mock synthesizer."
+        for attempt in range(2):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_schema": SynthesisResult,
+                        "temperature": temperature,
+                    }
                 )
-            else:
-                logger.warning(f"Gemini RAG synthesis failed: {e}. Falling back to mock synthesizer.")
-            return await self.mock_fallback.synthesize(
-                query, chunks, graph, candidate_concepts, temperature, conversation_history, persona_tone, custom_system_prompt
-            )
+                raw_json = response.text.strip()
+                if raw_json.startswith("```json"):
+                    raw_json = raw_json[7:]
+                if raw_json.endswith("```"):
+                    raw_json = raw_json[:-3]
+                data = json.loads(raw_json.strip())
+                resolved_answer = data.get("answer") or data.get("response") or data.get("content") or ""
+                return SynthesisResult(
+                    answer=resolved_answer,
+                    follow_up_suggestions=data.get("follow_up_suggestions", []),
+                    needs_clarification=data.get("needs_clarification", False),
+                    match_type=data.get("match_type", "complete"),
+                )
+            except Exception as e:
+                err_str = str(e)
+                if ("503" in err_str or "UNAVAILABLE" in err_str) and attempt == 0:
+                    await asyncio.sleep(0.8)
+                    continue
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    GeminiRAGSynthesizer._quota_cooldown_until = time.time() + 60.0
+                    logger.warning(
+                        f"Gemini RAG synthesis hit quota limit (429 RESOURCE_EXHAUSTED) for model '{self.model}'. "
+                        "Enabling 60s cooldown and falling back to mock synthesizer."
+                    )
+                else:
+                    logger.warning(f"Gemini RAG synthesis failed: {e}. Falling back to mock synthesizer.")
+                return await self.mock_fallback.synthesize(
+                    query, chunks, graph, candidate_concepts, temperature, conversation_history, persona_tone, custom_system_prompt
+                )
 
 
 def get_rag_synthesizer(api_key: Optional[str] = None) -> BaseRAGSynthesizer:
@@ -437,6 +437,17 @@ class RAGPipelineService:
         graph_store = await get_graph_store()
         graph_response = GraphNeighborhoodResponse()
         candidate_concepts = []
+
+        # If extractor or router didn't extract entities, fuzzy search tenant graph for candidate entities
+        if not detected_entities:
+            try:
+                candidate_ents = await graph_store.find_candidate_entities(
+                    tenant_id=tenant_id, query=effective_query, limit=5
+                )
+                detected_entities = [c.name for c in candidate_ents]
+            except Exception as e:
+                logger.debug(f"Candidate entity search fallback failed: {e}")
+
         if detected_entities:
             graph_response = await graph_store.get_neighborhood(
                 tenant_id=tenant_id,

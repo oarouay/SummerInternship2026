@@ -84,7 +84,7 @@ class GeminiGraphExtractor(BaseGraphExtractor):
     """
     _quota_cooldown_until: float = 0.0
 
-    def __init__(self, api_key: str, model: str = "gemini-flash-lite-latest"):
+    def __init__(self, api_key: str, model: str = "gemini-3.6-flash"):
         from google import genai
         from google.genai import types
 
