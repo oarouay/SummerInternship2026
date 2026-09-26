@@ -60,21 +60,42 @@ async def fetch_and_clean_url(url: str) -> Tuple[str, str]:
     validate_safe_url(url)
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; GraphRAG-Bot/1.0; +http://localhost)",
-        "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+        "Accept-Language": "fr,ar,en-US;q=0.9,en;q=0.8",
     }
 
     try:
-        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                raise ValueError(f"HTTP error {resp.status_code} fetching URL.")
+        try:
+            # 1. First attempt with standard SSL certificate verification
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, verify=True) as client:
+                resp = await client.get(url, headers=headers)
+        except (httpx.ConnectError, httpx.RequestError) as conn_err:
+            err_str = str(conn_err).lower()
+            # If certificate verification failed (frequent on government/custom CA sites like douane portals),
+            # fall back gracefully to verify=False for public content extraction
+            if "certificate verify failed" in err_str or "ssl" in err_str or "certificate_verify_failed" in err_str:
+                logger.warning(
+                    "SSL verification failed for %s (%s). Falling back to verify=False for public page crawl.",
+                    url,
+                    conn_err
+                )
+                async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, verify=False) as client:
+                    resp = await client.get(url, headers=headers)
+            else:
+                raise
 
-            content_type = resp.headers.get("content-type", "")
-            if "text/html" not in content_type and "text/plain" not in content_type:
-                raise ValueError(f"Unsupported content type '{content_type}'. Must be text/html or text/plain.")
+        if resp.status_code != 200:
+            raise ValueError(f"HTTP error {resp.status_code} fetching URL.")
 
-            raw_html = resp.text
+        content_type = resp.headers.get("content-type", "")
+        if "text/html" not in content_type and "text/plain" not in content_type:
+            raise ValueError(f"Unsupported content type '{content_type}'. Must be text/html or text/plain.")
+
+        raw_html = resp.text
     except httpx.RequestError as e:
         raise ValueError(f"Network error while connecting to URL: {e}")
 
