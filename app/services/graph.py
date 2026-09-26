@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections import deque
 from typing import Dict, List, Optional, Set, Tuple
@@ -25,6 +26,13 @@ class BaseGraphStore(ABC):
         self, tenant_id: int, source_id: int, chunk_id: int, graph: GraphExtractionResult
     ) -> None:
         """Upsert entities and relationships into the tenant's knowledge graph."""
+        pass
+
+    @abstractmethod
+    async def insert_graph_batch(
+        self, tenant_id: int, source_id: int, chunk_graphs: List[Tuple[int, GraphExtractionResult]]
+    ) -> None:
+        """Batch upsert entities and relationships for multiple chunks in a single operation."""
         pass
 
     @abstractmethod
@@ -133,6 +141,13 @@ class InMemoryGraphStore(BaseGraphStore):
                     "weight": 1,
                     "source_ids": [source_id],
                 }
+
+    async def insert_graph_batch(
+        self, tenant_id: int, source_id: int, chunk_graphs: List[Tuple[int, GraphExtractionResult]]
+    ) -> None:
+        """Batch upsert entities and relationships for multiple chunks."""
+        for chunk_id, graph in chunk_graphs:
+            await self.insert_graph(tenant_id, source_id, chunk_id, graph)
 
     async def get_neighborhood(
         self, tenant_id: int, entity_names: List[str], max_hops: int = 1, limit: int = 25
@@ -257,13 +272,13 @@ class InMemoryGraphStore(BaseGraphStore):
         t_nodes = self._nodes[tenant_id]
         t_edges = self._edges[tenant_id]
         query_lower = query.lower().strip()
-        query_words = set(query_lower.split())
+        query_words = set(re.findall(r"\w+", query_lower))
 
         scored_candidates = []
         for name, data in t_nodes.items():
             name_lower = name.lower()
             desc_lower = (data.get("description") or "").lower()
-            name_words = set(name_lower.split())
+            name_words = set(re.findall(r"\w+", name_lower))
 
             score = 0.0
             if query_lower in name_lower or name_lower in query_lower:
@@ -271,6 +286,8 @@ class InMemoryGraphStore(BaseGraphStore):
             overlap = len(query_words.intersection(name_words))
             if overlap > 0:
                 score += overlap * 0.8
+            if any(w in name_lower for w in query_words if len(w) > 2):
+                score += 0.5
             if any(w in desc_lower for w in query_words if len(w) > 2):
                 score += 0.3
 
@@ -344,22 +361,41 @@ class Neo4jGraphStore(BaseGraphStore):
     async def insert_graph(
         self, tenant_id: int, source_id: int, chunk_id: int, graph: GraphExtractionResult
     ) -> None:
+        await self.insert_graph_batch(tenant_id, source_id, [(chunk_id, graph)])
+
+    async def insert_graph_batch(
+        self, tenant_id: int, source_id: int, chunk_graphs: List[Tuple[int, GraphExtractionResult]]
+    ) -> None:
+        """Batch upsert entities and relationships for multiple chunks in unified Cypher UNWIND transactions."""
         await self.initialize()
-        entities_data = [
-            {"name": e.name.strip(), "type": e.type, "description": e.description}
-            for e in graph.entities
-            if e.name.strip()
-        ]
-        relationships_data = [
-            {
-                "source": r.source.strip(),
-                "target": r.target.strip(),
-                "type": r.relation_type.strip().upper(),
-                "description": r.description,
-            }
-            for r in graph.relationships
-            if r.source.strip() and r.target.strip()
-        ]
+
+        entities_data = []
+        relationships_data = []
+
+        for chunk_id, graph in chunk_graphs:
+            for e in graph.entities:
+                ename = e.name.strip()
+                if ename:
+                    entities_data.append({
+                        "name": ename,
+                        "type": e.type,
+                        "description": e.description or "",
+                        "chunk_id": chunk_id,
+                    })
+            for r in graph.relationships:
+                rsrc = r.source.strip()
+                rtgt = r.target.strip()
+                if rsrc and rtgt:
+                    relationships_data.append({
+                        "source": rsrc,
+                        "target": rtgt,
+                        "type": r.relation_type.strip().upper(),
+                        "description": r.description or "",
+                        "chunk_id": chunk_id,
+                    })
+
+        if not entities_data and not relationships_data:
+            return
 
         async with self.driver.session() as session:
             # 1. Upsert Entities
@@ -369,16 +405,15 @@ class Neo4jGraphStore(BaseGraphStore):
                 MERGE (e:Entity {tenant_id: $tenant_id, name: ent.name})
                 ON CREATE SET e.type = ent.type,
                               e.description = ent.description,
-                              e.chunk_ids = [$chunk_id],
+                              e.chunk_ids = [ent.chunk_id],
                               e.source_ids = [$source_id]
-                ON MATCH SET e.chunk_ids = CASE WHEN NOT $chunk_id IN e.chunk_ids THEN e.chunk_ids + $chunk_id ELSE e.chunk_ids END,
+                ON MATCH SET e.chunk_ids = CASE WHEN NOT ent.chunk_id IN e.chunk_ids THEN e.chunk_ids + ent.chunk_id ELSE e.chunk_ids END,
                              e.source_ids = CASE WHEN NOT $source_id IN e.source_ids THEN e.source_ids + $source_id ELSE e.source_ids END
                 """
                 await session.run(
                     cypher_nodes,
                     tenant_id=tenant_id,
                     entities=entities_data,
-                    chunk_id=chunk_id,
                     source_id=source_id,
                 )
 
@@ -415,6 +450,8 @@ class Neo4jGraphStore(BaseGraphStore):
             WHERE start.name IN $entity_names
                OR toLower(start.name) IN [x IN $entity_names | toLower(x)]
             OPTIONAL MATCH path = (start)-[r:RELATION*1..{max_hops}]-(connected:Entity {{tenant_id: $tenant_id}})
+            WHERE ALL(rel IN relationships(path) WHERE rel.tenant_id = $tenant_id)
+              AND ALL(node IN nodes(path) WHERE node.tenant_id = $tenant_id)
             RETURN start, path
             LIMIT $limit
             """
@@ -565,9 +602,9 @@ class Neo4jGraphStore(BaseGraphStore):
         clean_query = query.strip()
         cypher = """
         MATCH (e:Entity {tenant_id: $tenant_id})
-        WHERE toLower(e.name) CONTAINS toLower($query) 
-           OR toLower($query) CONTAINS toLower(e.name)
-           OR (e.description IS NOT NULL AND toLower(e.description) CONTAINS toLower($query))
+        WHERE toLower(e.name) CONTAINS toLower($search_query) 
+           OR toLower($search_query) CONTAINS toLower(e.name)
+           OR (e.description IS NOT NULL AND toLower(e.description) CONTAINS toLower($search_query))
         OPTIONAL MATCH (e)-[:RELATION]-(neighbor:Entity {tenant_id: $tenant_id})
         RETURN e.name AS name, 
                e.type AS type, 
@@ -576,7 +613,7 @@ class Neo4jGraphStore(BaseGraphStore):
         LIMIT $limit
         """
         async with self.driver.session() as session:
-            result = await session.run(cypher, tenant_id=tenant_id, query=clean_query, limit=limit)
+            result = await session.run(cypher, tenant_id=tenant_id, search_query=clean_query, limit=limit)
             records = [rec async for rec in result]
 
         return [

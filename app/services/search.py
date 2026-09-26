@@ -1,11 +1,15 @@
 from typing import List, Optional
+import logging
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.chunk import DocumentChunk
 from app.models.source import Source
 from app.schemas.search import SearchResult
+
+logger = logging.getLogger(__name__)
 
 
 def _calculate_cosine_distance(vec_a: List[float], vec_b: List[float]) -> float:
@@ -29,13 +33,20 @@ async def search_similar_chunks(
 ) -> List[SearchResult]:
     """
     Performs tenant-isolated vector semantic search using Cosine Distance.
-    Uses native pgvector `<=>` on PostgreSQL, with an in-memory numpy fallback on SQLite.
+    Uses native pgvector `<=>` on PostgreSQL with HNSW ef_search tuning,
+    with an in-memory numpy fallback on SQLite.
     """
     # Detect dialect
     bind = db.bind or getattr(db.sync_session, "bind", None)
     is_postgres = bool(bind and "postgres" in str(bind.dialect.name).lower())
 
     if is_postgres:
+        # Runtime HNSW search precision tuning (ef_search)
+        try:
+            await db.execute(text(f"SET LOCAL hnsw.ef_search = {settings.HNSW_EF_SEARCH};"))
+        except Exception as e:
+            logger.debug(f"Notice: Could not set hnsw.ef_search: {e}")
+
         # Native pgvector Cosine Distance (<=>)
         stmt = (
             select(

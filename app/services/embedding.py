@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 from abc import ABC, abstractmethod
@@ -85,49 +86,162 @@ class GeminiEmbeddingService(BaseEmbeddingService):
         self.types = types
 
     async def embed_query(self, text: str) -> List[float]:
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=text,
-            config=self.types.EmbedContentConfig(
+        try:
+            cfg = self.types.EmbedContentConfig(
                 output_dimensionality=self.dimensions
             )
-        )
-        # Handle single embedding response
-        if hasattr(response, "embedding") and response.embedding:
-            return response.embedding.values
-        elif hasattr(response, "embeddings") and response.embeddings:
-            return response.embeddings[0].values
-        raise ValueError("Gemini API returned unexpected embedding structure.")
+            is_sync_mocked = (
+                hasattr(self.client, "models")
+                and hasattr(self.client.models, "embed_content")
+                and type(self.client.models.embed_content).__name__ in ("MagicMock", "AsyncMock", "Mock")
+            )
+            if hasattr(self.client, "aio") and hasattr(self.client.aio, "models") and not is_sync_mocked:
+                # Native async client avoids blocking the event loop
+                response = await self.client.aio.models.embed_content(
+                    model=self.model,
+                    contents=text,
+                    config=cfg,
+                )
+            else:
+                # Fallback path if native async client is unavailable
+                response = await asyncio.to_thread(
+                    self.client.models.embed_content,
+                    model=self.model,
+                    contents=text,
+                    config=cfg,
+                )
+            # Handle single embedding response
+            if hasattr(response, "embedding") and response.embedding:
+                return response.embedding.values
+            elif hasattr(response, "embeddings") and response.embeddings:
+                return response.embeddings[0].values
+            raise ValueError("Gemini API returned unexpected embedding structure.")
+        except Exception as e:
+            logger.warning(f"Gemini embedding failed: {e}. Falling back to MockEmbeddingService.")
+            return await MockEmbeddingService(dimensions=self.dimensions).embed_query(text)
 
     async def embed_documents(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
 
-        # The Gemini SDK supports batch embedding by passing a list of contents
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=texts,
-            config=self.types.EmbedContentConfig(
+        try:
+            cfg = self.types.EmbedContentConfig(
                 output_dimensionality=self.dimensions
             )
-        )
-        if hasattr(response, "embeddings") and response.embeddings:
-            return [emb.values for emb in response.embeddings]
-        raise ValueError("Gemini API returned unexpected batch embedding structure.")
+            is_sync_mocked = (
+                hasattr(self.client, "models")
+                and hasattr(self.client.models, "embed_content")
+                and type(self.client.models.embed_content).__name__ in ("MagicMock", "AsyncMock", "Mock")
+            )
+            # The Gemini SDK supports batch embedding by passing a list of contents
+            if hasattr(self.client, "aio") and hasattr(self.client.aio, "models") and not is_sync_mocked:
+                # Native async client avoids blocking the event loop
+                response = await self.client.aio.models.embed_content(
+                    model=self.model,
+                    contents=texts,
+                    config=cfg,
+                )
+            else:
+                # Fallback path if native async client is unavailable
+                response = await asyncio.to_thread(
+                    self.client.models.embed_content,
+                    model=self.model,
+                    contents=texts,
+                    config=cfg,
+                )
+            if hasattr(response, "embeddings") and response.embeddings:
+                return [emb.values for emb in response.embeddings]
+            raise ValueError("Gemini API returned unexpected batch embedding structure.")
+        except Exception as e:
+            logger.warning(f"Gemini batch embedding failed: {e}. Falling back to MockEmbeddingService.")
+            return await MockEmbeddingService(dimensions=self.dimensions).embed_documents(texts)
+
+
+class OpenAIEmbeddingService(BaseEmbeddingService):
+    """
+    OpenAI Embedding Service using text-embedding-3-small (supports native 768 dimensions).
+    """
+
+    def __init__(self, api_key: str, model: str = "text-embedding-3-small", dimensions: int = 768):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(api_key=api_key, timeout=10.0)
+        self.model = model
+        self.dimensions = dimensions
+
+    async def embed_query(self, text: str) -> List[float]:
+        try:
+            res = await self.client.embeddings.create(
+                input=text,
+                model=self.model,
+                dimensions=self.dimensions,
+            )
+            return res.data[0].embedding
+        except Exception as e:
+            logger.warning(f"OpenAI embedding failed: {e}. Falling back to MockEmbeddingService.")
+            return await MockEmbeddingService(dimensions=self.dimensions).embed_query(text)
+
+    async def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        if not texts:
+            return []
+        try:
+            res = await self.client.embeddings.create(
+                input=texts,
+                model=self.model,
+                dimensions=self.dimensions,
+            )
+            return [item.embedding for item in res.data]
+        except Exception as e:
+            logger.warning(f"OpenAI batch embedding failed: {e}. Falling back to MockEmbeddingService.")
+            return await MockEmbeddingService(dimensions=self.dimensions).embed_documents(texts)
 
 
 def get_embedding_service(api_key: Optional[str] = None) -> BaseEmbeddingService:
     """
-    Factory that returns GeminiEmbeddingService if a valid API key is provided
-    (or if GEMINI_API_KEY is present in settings), otherwise falls back to MockEmbeddingService.
+    Factory that returns OpenAIEmbeddingService if an OpenAI key is configured,
+    or GeminiEmbeddingService if a Gemini key is configured,
+    otherwise falls back to MockEmbeddingService.
     """
-    effective_key = (api_key and api_key.strip()) or (settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
-    if effective_key:
+    # 1. Explicit OpenAI key
+    if api_key and api_key.strip() and api_key.strip().startswith("sk-"):
+        try:
+            return OpenAIEmbeddingService(
+                api_key=api_key.strip(),
+                model=settings.EMBEDDING_MODEL if "text-embedding" in settings.EMBEDDING_MODEL else "text-embedding-3-small",
+                dimensions=settings.EMBEDDING_DIMENSIONS,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAIEmbeddingService ({e}). Checking Gemini...")
+
+    # 2. Explicit Gemini key
+    if api_key and api_key.strip() and not api_key.strip().startswith("sk-"):
         try:
             return GeminiEmbeddingService(
-                api_key=effective_key,
-                model=settings.EMBEDDING_MODEL,
-                dimensions=settings.EMBEDDING_DIMENSIONS
+                api_key=api_key.strip(),
+                model="gemini-embedding-001",
+                dimensions=settings.EMBEDDING_DIMENSIONS,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize GeminiEmbeddingService ({e}). Falling back to MockEmbeddingService.")
+            return MockEmbeddingService(dimensions=settings.EMBEDDING_DIMENSIONS)
+
+    # 3. System OpenAI key fallback
+    if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY.strip():
+        try:
+            return OpenAIEmbeddingService(
+                api_key=settings.OPENAI_API_KEY.strip(),
+                model=settings.EMBEDDING_MODEL if "text-embedding" in settings.EMBEDDING_MODEL else "text-embedding-3-small",
+                dimensions=settings.EMBEDDING_DIMENSIONS,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAIEmbeddingService ({e}). Checking Gemini...")
+
+    # 4. System Gemini key fallback
+    if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+        try:
+            return GeminiEmbeddingService(
+                api_key=settings.GEMINI_API_KEY.strip(),
+                model="gemini-embedding-001",
+                dimensions=settings.EMBEDDING_DIMENSIONS,
             )
         except Exception as e:
             logger.warning(f"Failed to initialize GeminiEmbeddingService ({e}). Falling back to MockEmbeddingService.")

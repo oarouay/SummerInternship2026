@@ -37,11 +37,13 @@ async def process_source_pipeline(source_id: int) -> None:
                 logger.error(f"[Pipeline] Source {source_id} not found.")
                 return
 
-            # Check tenant ChatbotConfig for custom gemini_api_key override
+            # Check tenant ChatbotConfig for custom API keys
             cfg_stmt = select(ChatbotConfig).where(ChatbotConfig.tenant_id == source.tenant_id)
             cfg_res = await db.execute(cfg_stmt)
             chatbot_cfg = cfg_res.scalar_one_or_none()
+            tenant_openai_key = chatbot_cfg.openai_api_key if chatbot_cfg else None
             tenant_gemini_key = chatbot_cfg.gemini_api_key if chatbot_cfg else None
+            effective_api_key = tenant_openai_key or tenant_gemini_key
 
             # 2. Update status to PROCESSING
             source.status = SourceStatus.PROCESSING.value
@@ -71,8 +73,8 @@ async def process_source_pipeline(source_id: int) -> None:
             if not chunks_data:
                 raise ValueError("Splitting document produced no text chunks.")
 
-            # 5. Generate Vector Embeddings (Google Gemini text-embedding-004)
-            embedding_service = get_embedding_service(api_key=tenant_gemini_key)
+            # 5. Generate Vector Embeddings (OpenAI / Gemini / Mock)
+            embedding_service = get_embedding_service(api_key=effective_api_key)
             chunk_texts = [meta["content"] for meta in chunks_data]
             embeddings = await embedding_service.embed_documents(chunk_texts)
 
@@ -102,24 +104,45 @@ async def process_source_pipeline(source_id: int) -> None:
             # 8. Knowledge Graph Construction (Entity & Relationship Extraction)
             total_entities = 0
             total_relationships = 0
-            if settings.GRAPH_ENABLED:
+            if settings.GRAPH_ENABLED and created_chunk_records:
                 graph_store = await get_graph_store()
-                graph_extractor = get_graph_extractor(api_key=tenant_gemini_key)
+                graph_extractor = get_graph_extractor(api_key=effective_api_key)
 
                 # Clean any previous graph data for this source
                 await graph_store.delete_tenant_source_graph(
                     tenant_id=source.tenant_id, source_id=source.id
                 )
 
-                for chunk_rec in created_chunk_records:
-                    graph_res = await graph_extractor.extract_graph(chunk_rec.content)
-                    total_entities += len(graph_res.entities)
-                    total_relationships += len(graph_res.relationships)
-                    await graph_store.insert_graph(
+                concurrency_limit = getattr(settings, "INGESTION_EXTRACTION_CONCURRENCY", 5)
+                sem = asyncio.Semaphore(concurrency_limit)
+
+                async def extract_for_chunk(chunk_rec: DocumentChunk):
+                    async with sem:
+                        res = await graph_extractor.extract_graph(chunk_rec.content)
+                        return chunk_rec.id, res
+
+                extraction_tasks = [extract_for_chunk(rec) for rec in created_chunk_records]
+                results = await asyncio.gather(*extraction_tasks, return_exceptions=True)
+
+                successful_chunk_graphs = []
+                for idx, res in enumerate(results):
+                    chunk_id = created_chunk_records[idx].id
+                    if isinstance(res, Exception):
+                        logger.warning(
+                            f"[Pipeline] Graph extraction failed for chunk {chunk_id}: {res}. "
+                            "Continuing with remaining chunks to preserve ingestion fault isolation."
+                        )
+                    else:
+                        c_id, graph_res = res
+                        successful_chunk_graphs.append((c_id, graph_res))
+                        total_entities += len(graph_res.entities)
+                        total_relationships += len(graph_res.relationships)
+
+                if successful_chunk_graphs:
+                    await graph_store.insert_graph_batch(
                         tenant_id=source.tenant_id,
                         source_id=source.id,
-                        chunk_id=chunk_rec.id,
-                        graph=graph_res,
+                        chunk_graphs=successful_chunk_graphs,
                     )
 
             # 9. Update status to INDEXED

@@ -59,18 +59,27 @@ class Settings(BaseSettings):
     DEFAULT_CHUNK_SIZE: int = 1000  # Characters (~250 tokens)
     DEFAULT_CHUNK_OVERLAP: int = 200  # Characters (~50 tokens)
 
-    # Google Gemini & Vector Settings
+    # AI Provider & Vector Settings (OpenAI / Gemini)
+    OPENAI_API_KEY: Optional[str] = None
     GEMINI_API_KEY: Optional[str] = None
-    EMBEDDING_MODEL: str = "gemini-embedding-001"
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMENSIONS: int = 768
     DEFAULT_SEARCH_TOP_K: int = 5
-    LLM_MODEL: str = "gemini-flash-lite-latest"
+    LLM_MODEL: str = "gpt-4o-mini"
 
     # Neo4j Graph Database Settings
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "StrongPassword123!"
     GRAPH_ENABLED: bool = True
+
+    # Ingestion Extraction Concurrency
+    INGESTION_EXTRACTION_CONCURRENCY: int = 5
+
+    # pgvector HNSW ANN Index Settings
+    HNSW_M: int = 16
+    HNSW_EF_CONSTRUCTION: int = 64
+    HNSW_EF_SEARCH: int = 40
 
     model_config = SettingsConfigDict(
         env_file=".env",

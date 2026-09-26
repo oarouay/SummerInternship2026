@@ -41,3 +41,6 @@ class RAGQueryResponse(BaseModel):
     graph_citations: List[RAGGraphCitation] = Field(default_factory=list)
     entities_detected: List[str] = Field(default_factory=list)
     execution_time_ms: float
+    evidence_status: Optional[str] = Field(default="sufficient", description="sufficient, partial, insufficient, conflicting")
+    ai_profile_version: Optional[int] = Field(default=None)
+    persona_name: Optional[str] = Field(default=None)

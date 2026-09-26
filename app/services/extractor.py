@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -116,15 +117,28 @@ class GeminiGraphExtractor(BaseGraphExtractor):
         """
 
         try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=self.types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=GraphExtractionResult,
-                    temperature=0.1
-                )
+            req_config = self.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=GraphExtractionResult,
+                temperature=0.1
             )
+            if hasattr(self.client, "aio") and hasattr(self.client.aio, "models"):
+                # Native async client avoids blocking the event loop
+                gen_coro = self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config=req_config,
+                )
+            else:
+                # Fallback path if native async client is unavailable
+                gen_coro = asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.model,
+                    contents=prompt,
+                    config=req_config,
+                )
+            # Cap latency to 10.0s max: fail-fast to deterministic extractor on API stalls
+            response = await asyncio.wait_for(gen_coro, timeout=10.0)
             return GraphExtractionResult.model_validate_json(response.text)
         except Exception as e:
             err_str = str(e)
@@ -139,17 +153,102 @@ class GeminiGraphExtractor(BaseGraphExtractor):
             return await MockGraphExtractor().extract_graph(text)
 
 
+class OpenAIGraphExtractor(BaseGraphExtractor):
+    """
+    OpenAI Knowledge Graph Extractor using structured JSON output.
+    """
+
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(api_key=api_key, timeout=10.0)
+        self.model = model
+
+    async def extract_graph(self, text: str) -> GraphExtractionResult:
+        if not text.strip():
+            return GraphExtractionResult()
+
+        prompt = f"""You are an expert Knowledge Graph construction AI.
+Analyze the following text and extract all meaningful entities and the directed relationships connecting them.
+
+Guidelines:
+1. Entity names MUST be canonical and clean (e.g. 'FastAPI' instead of 'the FastAPI framework').
+2. Assign an appropriate uppercase type to each entity: PERSON, ORGANIZATION, PROJECT, TECHNOLOGY, LOCATION, CONCEPT.
+3. Relationship types MUST be concise uppercase verbs (e.g. 'MANAGES', 'DEPENDS_ON', 'USES', 'CREATED_BY', 'PART_OF').
+4. Provide clear, factual descriptions for both entities and relationships based only on the provided text.
+
+Format the response strictly as a JSON object matching this schema:
+{{
+  "entities": [
+    {{"name": "string", "type": "string", "description": "string"}}
+  ],
+  "relationships": [
+    {{"source": "string", "target": "string", "relation_type": "string", "description": "string"}}
+  ]
+}}
+
+Text passage:
+\"\"\"{text}\"\"\""""
+
+        try:
+            res = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a specialized knowledge graph extraction assistant. Output only valid JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+            )
+            raw_content = res.choices[0].message.content or "{}"
+            return GraphExtractionResult.model_validate_json(raw_content)
+        except Exception as e:
+            logger.warning(f"OpenAI graph extraction failed: {e}. Falling back to rule-based extractor.")
+            return await MockGraphExtractor().extract_graph(text)
+
+
 def get_graph_extractor(api_key: Optional[str] = None) -> BaseGraphExtractor:
     """
-    Factory that returns GeminiGraphExtractor if a valid API key is provided
-    (or if GEMINI_API_KEY is configured in settings), otherwise returns MockGraphExtractor.
+    Factory that returns OpenAIGraphExtractor if an OpenAI key is configured,
+    or GeminiGraphExtractor if a Gemini key is configured,
+    otherwise falls back to MockGraphExtractor.
     """
-    effective_key = (api_key and api_key.strip()) or (settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
-    if effective_key:
+    # 1. Explicit OpenAI key
+    if api_key and api_key.strip() and api_key.strip().startswith("sk-"):
+        try:
+            return OpenAIGraphExtractor(
+                api_key=api_key.strip(),
+                model=settings.LLM_MODEL if "gpt" in settings.LLM_MODEL else "gpt-4o-mini"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAIGraphExtractor ({e}). Checking Gemini...")
+
+    # 2. Explicit Gemini key
+    if api_key and api_key.strip() and not api_key.strip().startswith("sk-"):
         try:
             return GeminiGraphExtractor(
-                api_key=effective_key,
-                model=settings.LLM_MODEL
+                api_key=api_key.strip(),
+                model="models/gemini-3.6-flash"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize GeminiGraphExtractor ({e}). Falling back to MockGraphExtractor.")
+            return MockGraphExtractor()
+
+    # 3. System OpenAI key fallback
+    if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY.strip():
+        try:
+            return OpenAIGraphExtractor(
+                api_key=settings.OPENAI_API_KEY.strip(),
+                model=settings.LLM_MODEL if "gpt" in settings.LLM_MODEL else "gpt-4o-mini"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAIGraphExtractor ({e}). Checking Gemini...")
+
+    # 4. System Gemini key fallback
+    if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+        try:
+            return GeminiGraphExtractor(
+                api_key=settings.GEMINI_API_KEY.strip(),
+                model="models/gemini-3.6-flash"
             )
         except Exception as e:
             logger.warning(f"Failed to initialize GeminiGraphExtractor ({e}). Falling back to MockGraphExtractor.")

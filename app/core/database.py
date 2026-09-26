@@ -56,8 +56,18 @@ async def init_db() -> None:
         except Exception:
             # Silently pass on SQLite or environments where extension is already active or unneeded
             pass
+        import app.models  # Ensure all models are registered on Base.metadata
         await conn.run_sync(Base.metadata.create_all)
         try:
             await conn.execute(text("ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS gemini_api_key VARCHAR(255);"))
+            await conn.execute(text("ALTER TABLE chatbot_configs ADD COLUMN IF NOT EXISTS openai_api_key VARCHAR(255);"))
+        except Exception:
+            pass
+        try:
+            await conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS ix_document_chunks_embedding_hnsw "
+                f"ON document_chunks USING hnsw (embedding vector_cosine_ops) "
+                f"WITH (m = {settings.HNSW_M}, ef_construction = {settings.HNSW_EF_CONSTRUCTION});"
+            ))
         except Exception:
             pass

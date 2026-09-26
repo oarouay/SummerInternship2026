@@ -6,6 +6,7 @@ from app.models.source import Source, SourceType, SourceStatus
 from app.models.chunk import DocumentChunk
 from app.models.chatbot import ChatbotConfig
 from app.models.conversation import Conversation, ChatMessage
+from app.models.ai_profile import AIProfile, AIProfileVersion, Persona, AIProfileEvalCase
 
 __all__ = [
     "Base",
@@ -21,5 +22,9 @@ __all__ = [
     "ChatbotConfig",
     "Conversation",
     "ChatMessage",
+    "AIProfile",
+    "AIProfileVersion",
+    "Persona",
+    "AIProfileEvalCase",
 ]
 

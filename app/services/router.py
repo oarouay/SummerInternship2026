@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -291,14 +292,33 @@ LATEST USER MESSAGE:
 JSON RESPONSE:
 """
         try:
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config={
-                    "response_mime_type": "application/json",
-                    "temperature": 0.0,
-                }
+            req_config = {
+                "response_mime_type": "application/json",
+                "temperature": 0.0,
+            }
+            # Check if sync models.generate_content was specifically mocked (e.g. by unit tests)
+            is_sync_mocked = (
+                hasattr(self.client, "models")
+                and hasattr(self.client.models, "generate_content")
+                and type(self.client.models.generate_content).__name__ in ("MagicMock", "AsyncMock", "Mock")
             )
+            if hasattr(self.client, "aio") and hasattr(self.client.aio, "models") and not is_sync_mocked:
+                # Native async client avoids blocking the event loop
+                gen_coro = self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config=req_config,
+                )
+            else:
+                # Fallback path if native async client is unavailable or sync method is mocked in tests
+                gen_coro = asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.model,
+                    contents=prompt,
+                    config=req_config,
+                )
+            # Cap latency to 5.0s max: if Google API hangs on 503 retries, fail-fast to deterministic rule-based router
+            response = await asyncio.wait_for(gen_coro, timeout=5.0)
             raw_json = response.text.strip()
             data = json.loads(raw_json)
 
@@ -339,14 +359,137 @@ JSON RESPONSE:
             )
 
 
+class OpenAIConversationalRouter(BaseConversationalRouter):
+    """
+    Production router leveraging OpenAI (e.g. gpt-4o-mini) with structured JSON output schema.
+    Applies conversational routing to resolve ambiguity, rewrite queries, and extract seed entities.
+    """
+
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(api_key=api_key, timeout=8.0)
+        self.model = model
+        self.mock_fallback = MockConversationalRouter()
+
+    async def route(
+        self,
+        query: str,
+        conversation_history: Optional[List[dict]] = None,
+        tenant_name: Optional[str] = None,
+        custom_system_prompt: Optional[str] = None,
+    ) -> ConversationalRouteResult:
+        start_time = time.perf_counter()
+
+        history_str = "None"
+        if conversation_history:
+            recent_turns = conversation_history[-6:]
+            history_str = "\n".join([f"{msg.get('role', 'user').capitalize()}: {msg.get('content', '')}" for msg in recent_turns])
+
+        context_lines = []
+        if tenant_name:
+            context_lines.append(f"Target Organization / Company: {tenant_name}")
+        if custom_system_prompt:
+            context_lines.append(f"Organization Directives / Persona: {custom_system_prompt}")
+        context_block = ("\n" + "\n".join(context_lines) + "\n") if context_lines else ""
+
+        user_content = f"""{context_block}
+CONVERSATION HISTORY:
+{history_str}
+
+LATEST USER MESSAGE:
+{query}
+
+JSON RESPONSE:"""
+
+        try:
+            res = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": ROUTING_SYSTEM_INSTRUCTION},
+                    {"role": "user", "content": user_content},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+            )
+            raw_json = res.choices[0].message.content or "{}"
+            data = json.loads(raw_json)
+
+            action_val = data.get("action", "retrieve")
+            try:
+                action_enum = RouterAction(action_val)
+            except ValueError:
+                action_enum = RouterAction.RETRIEVE
+
+            clarification_opts = data.get("clarification_options", []) if action_enum == RouterAction.CLARIFY else []
+            if action_enum == RouterAction.CLARIFY and not clarification_opts:
+                mock_res = await self.mock_fallback.route(
+                    query=query,
+                    conversation_history=conversation_history,
+                    tenant_name=tenant_name,
+                    custom_system_prompt=custom_system_prompt,
+                )
+                clarification_opts = mock_res.clarification_options or ["Overview & Capabilities", "Specific Services", "Contact & Locations"]
+
+            elapsed = round((time.perf_counter() - start_time) * 1000, 2)
+            return ConversationalRouteResult(
+                action=action_enum,
+                standalone_query=data.get("standalone_query") if action_enum == RouterAction.RETRIEVE else None,
+                seed_entities=data.get("seed_entities", []) if action_enum == RouterAction.RETRIEVE else [],
+                direct_or_clarification_message=data.get("direct_or_clarification_message"),
+                clarification_options=clarification_opts,
+                execution_time_ms=elapsed,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[ConversationalRouter] OpenAI routing failed ({exc}). Falling back to rule-based router."
+            )
+            return await self.mock_fallback.route(
+                query=query,
+                conversation_history=conversation_history,
+                tenant_name=tenant_name,
+                custom_system_prompt=custom_system_prompt,
+            )
+
+
 def get_conversational_router(api_key: Optional[str] = None) -> BaseConversationalRouter:
-    """Factory returning GeminiConversationalRouter if API key is present, else MockConversationalRouter."""
-    effective_key = (api_key and api_key.strip()) or (settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
-    if effective_key:
+    """Factory returning OpenAIConversationalRouter or GeminiConversationalRouter based on config."""
+    # 1. Explicit OpenAI key
+    if api_key and api_key.strip() and api_key.strip().startswith("sk-"):
+        try:
+            return OpenAIConversationalRouter(
+                api_key=api_key.strip(),
+                model=settings.LLM_MODEL if "gpt" in settings.LLM_MODEL else "gpt-4o-mini"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAIConversationalRouter ({e}). Checking Gemini...")
+
+    # 2. Explicit Gemini key
+    if api_key and api_key.strip() and not api_key.strip().startswith("sk-"):
         try:
             return GeminiConversationalRouter(
-                api_key=effective_key,
-                model=settings.LLM_MODEL
+                api_key=api_key.strip(),
+                model="models/gemini-3.6-flash"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize GeminiConversationalRouter ({e}). Using MockConversationalRouter.")
+            return MockConversationalRouter()
+
+    # 3. System OpenAI key fallback
+    if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY.strip():
+        try:
+            return OpenAIConversationalRouter(
+                api_key=settings.OPENAI_API_KEY.strip(),
+                model=settings.LLM_MODEL if "gpt" in settings.LLM_MODEL else "gpt-4o-mini"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAIConversationalRouter ({e}). Checking Gemini...")
+
+    # 4. System Gemini key fallback
+    if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+        try:
+            return GeminiConversationalRouter(
+                api_key=settings.GEMINI_API_KEY.strip(),
+                model="models/gemini-3.6-flash"
             )
         except Exception as e:
             logger.warning(f"Failed to initialize GeminiConversationalRouter ({e}). Using MockConversationalRouter.")

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -214,16 +215,30 @@ class GeminiGraphDisambiguator(BaseGraphDisambiguator):
         try:
             from google.genai import types
 
-            response = self.client.models.generate_content(
-                model=self.model,
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.2,
-                    response_mime_type="application/json",
-                    response_schema=DisambiguationResult,
-                ),
+            req_config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.2,
+                response_mime_type="application/json",
+                response_schema=DisambiguationResult,
             )
+            if hasattr(self.client, "aio") and hasattr(self.client.aio, "models"):
+                # Native async client avoids blocking the event loop
+                gen_coro = self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=user_prompt,
+                    config=req_config,
+                )
+            else:
+                # Fallback path if native async client is unavailable
+                gen_coro = asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.model,
+                    contents=user_prompt,
+                    config=req_config,
+                )
+
+            # Cap latency to 5.0s max: fail-fast to deterministic disambiguator on retry stalls
+            response = await asyncio.wait_for(gen_coro, timeout=5.0)
 
             raw_text = response.text.strip()
             # Clean possible markdown wrapping
@@ -251,9 +266,120 @@ class GeminiGraphDisambiguator(BaseGraphDisambiguator):
             )
 
 
+class OpenAIGraphDisambiguator(BaseGraphDisambiguator):
+    """
+    Production Graph Disambiguation Specialist leveraging OpenAI (e.g. gpt-4o-mini)
+    with structured JSON response schemas and automatic fallback to MockGraphDisambiguator.
+    """
+
+    def __init__(self, api_key: str, model: Optional[str] = None):
+        from openai import AsyncOpenAI
+        self.client = AsyncOpenAI(api_key=api_key, timeout=8.0)
+        self.model = model or (settings.LLM_MODEL if "gpt" in settings.LLM_MODEL else "gpt-4o-mini")
+        self.fallback = MockGraphDisambiguator()
+
+    async def disambiguate(
+        self,
+        user_query: str,
+        candidate_entities: List[CandidateEntity],
+        popular_tenant_topics: Optional[List[str]] = None,
+    ) -> DisambiguationResult:
+        popular_topics = popular_tenant_topics or []
+        candidates_data = [
+            {
+                "name": c.name,
+                "type": c.type,
+                "description": c.description,
+                "neighbors": c.neighbors,
+            }
+            for c in candidate_entities
+        ]
+
+        system_instruction = (
+            "You are the Graph Disambiguation Specialist for an enterprise multi-tenant platform.\n"
+            "The user's query failed to produce high-confidence document chunks or exact-match graph paths. "
+            "However, fuzzy search across the tenant's Knowledge Graph yielded candidate entities and neighborhood connections.\n"
+            "Your task is to analyze the candidate nodes, resolve why retrieval failed, and generate a natural disambiguation response "
+            "that presents relevant options to the user.\n\n"
+            "Operating Instructions:\n"
+            "1. CANDIDATE RELEVANCE SCORING: Evaluate which candidate entities share the closest conceptual, technical, or linguistic proximity. Filter out noisy entities matching merely common substrings.\n"
+            "2. DISAMBIGUATION STRATEGY:\n"
+            "   - 'entity_split': Multiple relevant candidates exist. Formulate an explanation pointing out distinct systems found in the knowledge graph, and ask which specific system they need.\n"
+            "   - 'adjacent_topics': Closely related candidate with 1-hop neighborhood. Explain the closest concept and present adjacent connections.\n"
+            "   - 'unindexed_fallback': No direct candidates match the query, but popular_tenant_topics are provided. State the requested subject is unindexed, and present the most active domain topics.\n"
+            "3. SUGGESTION GENERATION: Extract 2 to 4 concise, high-signal entity names or search phrases and assign them to 'suggested_chips'.\n"
+            "Output strictly valid JSON matching this schema:\n"
+            "{\n"
+            '  "explanation_message": "string",\n'
+            '  "disambiguation_type": "entity_split" | "adjacent_topics" | "unindexed_fallback",\n'
+            '  "suggested_chips": ["string"]\n'
+            "}"
+        )
+
+        user_prompt = (
+            f"User Query: {user_query}\n\n"
+            f"Candidate Entities:\n{json.dumps(candidates_data, indent=2)}\n\n"
+            f"Popular Tenant Topics:\n{json.dumps(popular_topics, indent=2)}"
+        )
+
+        try:
+            res = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+            raw_text = res.choices[0].message.content or "{}"
+            data = json.loads(raw_text.strip())
+            return DisambiguationResult(**data)
+        except Exception as e:
+            logger.warning(f"OpenAIGraphDisambiguator encountered error, falling back to mock: {e}")
+            return await self.fallback.disambiguate(
+                user_query=user_query,
+                candidate_entities=candidate_entities,
+                popular_tenant_topics=popular_topics,
+            )
+
+
 def get_graph_disambiguator(api_key: Optional[str] = None) -> BaseGraphDisambiguator:
-    """Factory selecting GeminiGraphDisambiguator if an API key is available, else MockGraphDisambiguator."""
-    key = api_key or settings.GEMINI_API_KEY
-    if key and key.strip() and not key.startswith("AIzaSyMock"):
-        return GeminiGraphDisambiguator(api_key=key.strip())
+    """Factory selecting OpenAIGraphDisambiguator or GeminiGraphDisambiguator if an API key is available, else MockGraphDisambiguator."""
+    # 1. Explicit OpenAI key
+    if api_key and api_key.strip() and api_key.strip().startswith("sk-"):
+        try:
+            return OpenAIGraphDisambiguator(
+                api_key=api_key.strip(),
+                model=settings.LLM_MODEL if "gpt" in settings.LLM_MODEL else "gpt-4o-mini",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAIGraphDisambiguator ({e}). Checking Gemini...")
+
+    # 2. Explicit Gemini key
+    if api_key and api_key.strip() and not api_key.strip().startswith("sk-") and not api_key.strip().startswith("AIzaSyMock"):
+        try:
+            return GeminiGraphDisambiguator(api_key=api_key.strip())
+        except Exception as e:
+            logger.warning(f"Failed to initialize GeminiGraphDisambiguator ({e}). Falling back to mock.")
+            return MockGraphDisambiguator()
+
+    # 3. System OpenAI key fallback
+    if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY.strip():
+        try:
+            return OpenAIGraphDisambiguator(
+                api_key=settings.OPENAI_API_KEY.strip(),
+                model=settings.LLM_MODEL if "gpt" in settings.LLM_MODEL else "gpt-4o-mini",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAIGraphDisambiguator ({e}). Checking Gemini...")
+
+    # 4. System Gemini key fallback
+    if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip() and not settings.GEMINI_API_KEY.strip().startswith("AIzaSyMock"):
+        try:
+            return GeminiGraphDisambiguator(api_key=settings.GEMINI_API_KEY.strip())
+        except Exception as e:
+            logger.warning(f"Failed to initialize GeminiGraphDisambiguator ({e}). Falling back to mock.")
+            return MockGraphDisambiguator()
+
     return MockGraphDisambiguator()

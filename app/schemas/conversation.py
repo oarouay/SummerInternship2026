@@ -52,6 +52,7 @@ class ChatMessageSendRequest(BaseModel):
     message: str = Field(..., min_length=1, description="User question or statement")
     top_k_chunks: Optional[int] = Field(None, ge=1, le=20)
     max_graph_hops: Optional[int] = Field(None, ge=1, le=3)
+    persona_id: Optional[int] = Field(None, description="Optional persona ID to select")
 
 
 class ConversationCreate(BaseModel):

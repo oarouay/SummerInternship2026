@@ -145,10 +145,14 @@ async def test_gemini_router_fallback_on_error():
 
 
 def test_get_conversational_router_factory():
-    """Verify factory returns Gemini router if key provided, else Mock router."""
-    with patch("app.services.router.settings.GEMINI_API_KEY", ""):
+    """Verify factory returns appropriate router based on keys, else Mock router."""
+    with patch("app.services.router.settings.GEMINI_API_KEY", ""), patch("app.services.router.settings.OPENAI_API_KEY", ""):
         mock_r = get_conversational_router(api_key=None)
         assert isinstance(mock_r, MockConversationalRouter)
+
+    openai_r = get_conversational_router(api_key="sk-test-key")
+    from app.services.router import OpenAIConversationalRouter
+    assert isinstance(openai_r, OpenAIConversationalRouter)
 
     gemini_r = get_conversational_router(api_key="test-key")
     assert isinstance(gemini_r, GeminiConversationalRouter)

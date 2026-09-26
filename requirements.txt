@@ -18,6 +18,8 @@ pgvector>=0.3.0
 google-genai>=1.0.0
 numpy>=1.26.0
 neo4j>=5.18.0
+alembic>=1.13.0
+openai>=1.20.0
 
 
 
