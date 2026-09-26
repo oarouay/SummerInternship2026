@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { chatbotApi, publicWidgetApi } from '../api/client';
+import MarkdownMessage from './MarkdownMessage';
 import { 
   Code2, 
   Copy, 
@@ -14,7 +15,10 @@ import {
   AlertCircle,
   RefreshCw,
   Sun,
-  Moon
+  Moon,
+  Sparkles,
+  HelpCircle,
+  CornerDownLeft
 } from 'lucide-react';
 
 export default function Integrations({ tenant }) {
@@ -31,10 +35,21 @@ export default function Integrations({ tenant }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTheme, setPreviewTheme] = useState('dark'); // 'dark' | 'light'
   const [previewMessages, setPreviewMessages] = useState([
-    { role: 'assistant', content: 'Hello! I am your AI assistant. How can I help you today?' }
+    { 
+      role: 'assistant', 
+      content: 'Hello! I am your AI assistant. How can I help you today? Ask me anything about your documents or knowledge graph.',
+      isStreaming: false,
+      metadata: null
+    }
   ]);
   const [previewInput, setPreviewInput] = useState('');
   const [previewSending, setPreviewSending] = useState(false);
+
+  // Refs for streaming buffer throttle and autoscroll
+  const streamBufferRef = useRef('');
+  const throttleTimeoutRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const messagesEndRef = useRef(null);
 
   const tenantSlug = tenant?.slug || 'your-organization';
 
@@ -48,6 +63,24 @@ export default function Integrations({ tenant }) {
   data-position="${position}"
   defer>
 </script>`;
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    if (previewOpen) {
+      scrollToBottom();
+    }
+  }, [previewMessages, previewOpen]);
+
+  // Clean up streaming abort controller and timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+      if (throttleTimeoutRef.current) clearTimeout(throttleTimeoutRef.current);
+    };
+  }, []);
 
   const handleCopyCode = () => {
     navigator.clipboard.writeText(widgetScriptCode);
@@ -72,24 +105,124 @@ export default function Integrations({ tenant }) {
     }
   };
 
-  const handleSendPreviewMessage = async (e) => {
-    e.preventDefault();
-    const text = previewInput.trim();
+  const flushBuffer = () => {
+    const fullText = streamBufferRef.current;
+    setPreviewMessages((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last && last.role === 'assistant') {
+        next[next.length - 1] = { ...last, content: fullText };
+      }
+      return next;
+    });
+  };
+
+  const handleSendPreviewMessage = async (e, customText = null) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const text = (customText !== null ? customText : previewInput).trim();
     if (!text || previewSending) return;
 
     setPreviewInput('');
     setPreviewSending(true);
 
     const userMsg = { role: 'user', content: text };
-    setPreviewMessages((prev) => [...prev, userMsg]);
+    const history = previewMessages.map((m) => ({ role: m.role, content: m.content }));
+
+    setPreviewMessages((prev) => [
+      ...prev,
+      userMsg,
+      { role: 'assistant', content: '', isStreaming: true, metadata: null }
+    ]);
+
+    streamBufferRef.current = '';
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortCtrl = new AbortController();
+    abortControllerRef.current = abortCtrl;
 
     try {
-      const history = previewMessages.map((m) => ({ role: m.role, content: m.content }));
-      const response = await publicWidgetApi.sendMessage(tenantSlug, text, history);
-      setPreviewMessages((prev) => [...prev, { role: 'assistant', content: response.answer || 'Thank you for your inquiry.' }]);
+      await publicWidgetApi.streamMessage(
+        tenantSlug,
+        text,
+        history,
+        {
+          signal: abortCtrl.signal,
+          onToken: (token) => {
+            streamBufferRef.current += token;
+            if (!throttleTimeoutRef.current) {
+              throttleTimeoutRef.current = setTimeout(() => {
+                flushBuffer();
+                throttleTimeoutRef.current = null;
+              }, 35);
+            }
+          },
+          onMetadata: (meta) => {
+            setPreviewMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') {
+                next[next.length - 1] = { ...last, metadata: meta };
+              }
+              return next;
+            });
+          },
+          onDone: () => {
+            if (throttleTimeoutRef.current) {
+              clearTimeout(throttleTimeoutRef.current);
+              throttleTimeoutRef.current = null;
+            }
+            flushBuffer();
+            setPreviewMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') {
+                next[next.length - 1] = { ...last, isStreaming: false };
+              }
+              return next;
+            });
+          },
+          onError: (err) => {
+            if (throttleTimeoutRef.current) {
+              clearTimeout(throttleTimeoutRef.current);
+              throttleTimeoutRef.current = null;
+            }
+            flushBuffer();
+            setPreviewMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last && last.role === 'assistant') {
+                next[next.length - 1] = {
+                  ...last,
+                  content: last.content || `Connection interrupted: ${err.message}`,
+                  isStreaming: false
+                };
+              }
+              return next;
+            });
+          }
+        }
+      );
     } catch (err) {
-      setPreviewMessages((prev) => [...prev, { role: 'assistant', content: `Error: ${err.message}` }]);
+      if (err.name === 'AbortError') return;
+      setPreviewMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last && last.role === 'assistant') {
+          next[next.length - 1] = {
+            ...last,
+            content: last.content || `Error: ${err.message}`,
+            isStreaming: false
+          };
+        }
+        return next;
+      });
     } finally {
+      if (throttleTimeoutRef.current) {
+        clearTimeout(throttleTimeoutRef.current);
+        throttleTimeoutRef.current = null;
+      }
       setPreviewSending(false);
     }
   };
@@ -323,36 +456,78 @@ export default function Integrations({ tenant }) {
                   position: 'absolute',
                   bottom: '76px',
                   [position === 'left' ? 'left' : 'right']: '16px',
-                  width: '320px',
-                  height: '380px',
-                  background: previewTheme === 'dark' ? '#191D24' : '#FFFFFF',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: '12px',
-                  boxShadow: 'var(--shadow-lg)',
+                  width: '336px',
+                  height: '420px',
+                  background: previewTheme === 'dark' ? '#0B0E14' : '#FFFFFF',
+                  border: previewTheme === 'dark' ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.1)',
+                  borderRadius: '16px',
+                  boxShadow: '0 20px 48px -10px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05)',
                   display: 'flex',
                   flexDirection: 'column',
                   overflow: 'hidden',
-                  zIndex: 20
+                  zIndex: 20,
+                  animation: 'previewWindowPop 0.22s cubic-bezier(0.16, 1, 0.3, 1)'
                 }}
               >
                 {/* Chat Header */}
                 <div
                   style={{
-                    background: primaryColor,
-                    color: '#FFFFFF',
+                    background: previewTheme === 'dark'
+                      ? 'linear-gradient(180deg, #161B26 0%, #0F141E 100%)'
+                      : 'linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)',
+                    borderBottom: previewTheme === 'dark' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
                     padding: '12px 14px',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'space-between'
+                    justifyContent: 'space-between',
+                    flexShrink: 0
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Bot size={16} />
-                    <span style={{ fontWeight: 600, fontSize: '13px' }}>AI Assistant</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+                    <div
+                      style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '9px',
+                        background: `linear-gradient(135deg, ${primaryColor} 0%, #1E1B4B 100%)`,
+                        border: '1px solid rgba(255, 255, 255, 0.2)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#FFFFFF',
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.3)'
+                      }}
+                    >
+                      <Bot size={17} />
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '13px', color: previewTheme === 'dark' ? '#F8FAFC' : '#0F172A', lineHeight: 1.2 }}>
+                        AI Assistant
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981', boxShadow: '0 0 6px #10B981' }} />
+                        <span style={{ fontSize: '10.5px', color: previewTheme === 'dark' ? '#94A3B8' : '#64748B' }}>
+                          GraphRAG Active
+                        </span>
+                      </div>
+                    </div>
                   </div>
+
                   <button
                     onClick={() => setPreviewOpen(false)}
-                    style={{ background: 'transparent', border: 'none', color: '#FFFFFF', cursor: 'pointer', padding: '2px' }}
+                    style={{
+                      width: '26px',
+                      height: '26px',
+                      borderRadius: '6px',
+                      background: previewTheme === 'dark' ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
+                      border: 'none',
+                      color: previewTheme === 'dark' ? '#94A3B8' : '#64748B',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'background 0.15s ease'
+                    }}
                     aria-label="Close preview chat"
                   >
                     <X size={14} />
@@ -360,57 +535,171 @@ export default function Integrations({ tenant }) {
                 </div>
 
                 {/* Messages Feed */}
-                <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div
+                  style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                    background: previewTheme === 'dark' ? '#0B0E14' : '#F8FAFC'
+                  }}
+                >
                   {previewMessages.map((msg, idx) => (
                     <div
                       key={idx}
                       style={{
                         alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                        background: msg.role === 'user' ? primaryColor : (previewTheme === 'dark' ? '#222833' : '#F1F5F9'),
-                        color: msg.role === 'user' ? '#FFFFFF' : (previewTheme === 'dark' ? '#F2F4F8' : '#1E293B'),
-                        padding: '8px 12px',
-                        borderRadius: '8px',
-                        fontSize: '12px',
-                        maxWidth: '85%',
-                        lineHeight: 1.45
+                        maxWidth: msg.role === 'user' ? '85%' : '92%',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start'
                       }}
                     >
-                      {msg.content}
+                      <div
+                        style={{
+                          background: msg.role === 'user'
+                            ? primaryColor
+                            : (previewTheme === 'dark' ? '#141923' : '#FFFFFF'),
+                          color: msg.role === 'user'
+                            ? '#FFFFFF'
+                            : (previewTheme === 'dark' ? '#F1F5F9' : '#0F172A'),
+                          border: msg.role === 'user'
+                            ? 'none'
+                            : (previewTheme === 'dark' ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.08)'),
+                          padding: '10px 13px',
+                          borderRadius: msg.role === 'user' ? '16px 16px 3px 16px' : '16px 16px 16px 3px',
+                          fontSize: '12.5px',
+                          lineHeight: 1.55,
+                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+                          wordBreak: 'break-word',
+                          width: '100%'
+                        }}
+                      >
+                        {msg.role === 'user' ? (
+                          msg.content
+                        ) : (
+                          <>
+                            {msg.isStreaming && !msg.content ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 0' }}>
+                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'currentColor', opacity: 0.5, animation: 'pulse 1.2s infinite' }} />
+                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'currentColor', opacity: 0.5, animation: 'pulse 1.2s 0.2s infinite' }} />
+                                <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'currentColor', opacity: 0.5, animation: 'pulse 1.2s 0.4s infinite' }} />
+                              </div>
+                            ) : (
+                              <MarkdownMessage
+                                content={msg.content}
+                                isStreaming={msg.isStreaming}
+                              />
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Clarification prompt indicator */}
+                      {msg.role === 'assistant' && msg.metadata?.needs_clarification && (
+                        <div
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            marginTop: '5px',
+                            fontSize: '10.5px',
+                            color: '#F59E0B',
+                            background: 'rgba(245, 158, 11, 0.1)',
+                            border: '1px solid rgba(245, 158, 11, 0.2)',
+                            borderRadius: '5px',
+                            padding: '2px 7px'
+                          }}
+                        >
+                          <HelpCircle size={11} />
+                          <span>Clarification suggested</span>
+                        </div>
+                      )}
+
+                      {/* Follow-up suggestion chips */}
+                      {msg.role === 'assistant' && Array.isArray(msg.metadata?.suggested_followups) && msg.metadata.suggested_followups.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '6px' }}>
+                          {msg.metadata.suggested_followups.map((suggestion, sIdx) => (
+                            <button
+                              key={sIdx}
+                              type="button"
+                              onClick={() => handleSendPreviewMessage(null, suggestion)}
+                              disabled={previewSending}
+                              style={{
+                                background: previewTheme === 'dark' ? 'rgba(255, 255, 255, 0.05)' : '#FFFFFF',
+                                border: previewTheme === 'dark' ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.12)',
+                                borderRadius: '12px',
+                                padding: '3px 9px',
+                                fontSize: '10.5px',
+                                color: previewTheme === 'dark' ? '#93C5FD' : primaryColor,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              <Sparkles size={10} />
+                              <span>{suggestion}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
-                  {previewSending && (
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      Assistant is typing...
-                    </div>
-                  )}
+                  <div ref={messagesEndRef} />
                 </div>
 
                 {/* Input Composer */}
                 <form
                   onSubmit={handleSendPreviewMessage}
                   style={{
-                    padding: '8px',
-                    borderTop: '1px solid var(--border-hairline)',
+                    padding: '9px 11px',
+                    borderTop: previewTheme === 'dark' ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
                     display: 'flex',
                     gap: '6px',
-                    background: previewTheme === 'dark' ? '#14171E' : '#FAFAFA'
+                    background: previewTheme === 'dark' ? '#121620' : '#FAFAFA'
                   }}
                 >
                   <input
                     type="text"
-                    placeholder="Type a message..."
+                    placeholder="Ask a question..."
                     value={previewInput}
                     onChange={(e) => setPreviewInput(e.target.value)}
-                    style={{ fontSize: '12px', height: '30px' }}
+                    style={{
+                      flex: 1,
+                      fontSize: '12px',
+                      height: '32px',
+                      padding: '0 12px',
+                      borderRadius: '8px',
+                      background: previewTheme === 'dark' ? '#1A202C' : '#FFFFFF',
+                      border: previewTheme === 'dark' ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.15)',
+                      color: previewTheme === 'dark' ? '#F8FAFC' : '#0F172A',
+                      outline: 'none'
+                    }}
                   />
                   <button
                     type="submit"
                     disabled={!previewInput.trim() || previewSending}
-                    className="btn btn-primary"
-                    style={{ background: primaryColor, borderColor: primaryColor, padding: '0 10px', height: '30px' }}
+                    style={{
+                      background: primaryColor,
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: '#FFFFFF',
+                      width: '32px',
+                      height: '32px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: !previewInput.trim() || previewSending ? 'not-allowed' : 'pointer',
+                      opacity: !previewInput.trim() || previewSending ? 0.5 : 1,
+                      transition: 'transform 0.15s ease, opacity 0.15s ease'
+                    }}
                     aria-label="Send preview message"
                   >
-                    <Send size={12} />
+                    <Send size={13} />
                   </button>
                 </form>
               </div>
@@ -429,22 +718,48 @@ export default function Integrations({ tenant }) {
                 onClick={() => setPreviewOpen(!previewOpen)}
                 style={{
                   background: primaryColor,
-                  width: '46px',
-                  height: '46px',
-                  borderRadius: '50%',
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '24px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#FFFFFF',
-                  boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
-                  border: 'none',
+                  boxShadow: `0 8px 20px -3px ${primaryColor}88, 0 4px 12px rgba(0, 0, 0, 0.3)`,
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
                   cursor: 'pointer',
-                  transition: 'transform var(--transition-fast)'
+                  transition: 'transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease',
+                  position: 'relative'
                 }}
-                title="Toggle Assistant"
+                title={previewOpen ? 'Close Assistant' : 'Open Assistant'}
                 aria-label="Toggle assistant widget"
               >
-                {previewOpen ? <X size={20} /> : <MessageSquare size={20} />}
+                {!previewOpen && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '1px',
+                      right: '1px',
+                      width: '11px',
+                      height: '11px',
+                      borderRadius: '50%',
+                      background: '#10B981',
+                      border: '2px solid #0B0E14',
+                      boxShadow: '0 0 0 2px rgba(16, 185, 129, 0.35)'
+                    }}
+                  />
+                )}
+                <div
+                  style={{
+                    transform: previewOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  {previewOpen ? <X size={18} /> : <MessageSquare size={18} />}
+                </div>
               </button>
             </div>
           </div>

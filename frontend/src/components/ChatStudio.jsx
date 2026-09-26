@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { chatApi, chatbotApi } from '../api/client';
+import { chatApi, chatbotApi, personasApi } from '../api/client';
 import { 
   Bot, 
   Send, 
@@ -21,10 +21,15 @@ import {
   CheckCheck,
   PanelLeftClose,
   PanelLeftOpen,
-  BookOpen
+  BookOpen,
+  AlertCircle
 } from 'lucide-react';
+import MarkdownMessage from './MarkdownMessage';
+import { useConfirm } from './ConfirmModal';
+
 
 export default function ChatStudio({ initialSourceScope = null }) {
+  const confirm = useConfirm();
   const [conversations, setConversations] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeConvId, setActiveConvId] = useState(null);
@@ -33,6 +38,10 @@ export default function ChatStudio({ initialSourceScope = null }) {
   const [inputMessage, setInputMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [botConfig, setBotConfig] = useState(null);
+
+  // Personas
+  const [personas, setPersonas] = useState([]);
+  const [selectedPersonaId, setSelectedPersonaId] = useState(null);
 
   // Sidebar collapse
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -86,9 +95,23 @@ export default function ChatStudio({ initialSourceScope = null }) {
     }
   };
 
+  const loadPersonas = async () => {
+    try {
+      const list = await personasApi.list();
+      setPersonas(list);
+      if (list.length > 0 && !selectedPersonaId) {
+        const def = list.find((p) => p.is_default) || list[0];
+        setSelectedPersonaId(def.id);
+      }
+    } catch (err) {
+      console.warn('Error loading personas:', err);
+    }
+  };
+
   useEffect(() => {
     loadConversations();
     loadBotConfig();
+    loadPersonas();
   }, []);
 
   useEffect(() => {
@@ -143,7 +166,18 @@ export default function ChatStudio({ initialSourceScope = null }) {
 
   const handleDeleteConversation = async (e, id) => {
     e.stopPropagation();
-    if (!confirm('Delete this conversation history?')) return;
+    const target = conversations.find((c) => c.id === id);
+    const titleText = target?.title ? `"${target.title}"` : 'this conversation';
+
+    const confirmed = await confirm({
+      title: 'Delete Conversation History?',
+      description: `Are you sure you want to delete ${titleText}? All messages, retrieved passages, and graph citations within this session will be permanently removed.`,
+      confirmText: 'Delete Conversation',
+      cancelText: 'Cancel',
+      variant: 'danger'
+    });
+    if (!confirmed) return;
+
     try {
       await chatApi.deleteConversation(id);
       const remaining = conversations.filter((c) => c.id !== id);
@@ -192,18 +226,133 @@ export default function ChatStudio({ initialSourceScope = null }) {
       content: userText,
       created_at: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, tempUserMsg]);
+
+    const tempAssistantId = Date.now() + 1;
+    const tempAssistantMsg = {
+      id: tempAssistantId,
+      role: 'assistant',
+      content: '',
+      isStreaming: true,
+      created_at: new Date().toISOString(),
+      citations: null,
+      follow_up_suggestions: [],
+      clarification_options: [],
+    };
+
+    setMessages((prev) => [...prev, tempUserMsg, tempAssistantMsg]);
+
+    let textBuffer = '';
+    let flushTimer = null;
+
+    const flushBuffer = () => {
+      if (!textBuffer) return;
+      const chunkToFlush = textBuffer;
+      textBuffer = '';
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempAssistantId
+            ? { ...m, content: m.content + chunkToFlush }
+            : m
+        )
+      );
+    };
+
+    const scheduleFlush = () => {
+      if (!flushTimer) {
+        flushTimer = setTimeout(() => {
+          flushTimer = null;
+          flushBuffer();
+        }, 35);
+      }
+    };
 
     try {
-      const assistantMsg = await chatApi.sendMessage(targetConvId, userText, topK, maxHops);
-      setMessages((prev) => [...prev, assistantMsg]);
-      loadConversations();
+      await chatApi.streamMessage(targetConvId, userText, topK, maxHops, selectedPersonaId, {
+        onToken: (chunk) => {
+          textBuffer += chunk;
+          scheduleFlush();
+        },
+        onMetadata: (meta) => {
+          if (flushTimer) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+          }
+          flushBuffer();
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tempAssistantId
+                ? {
+                    ...m,
+                    citations: {
+                      sources: meta.source_citations || [],
+                      graph: meta.graph_citations || [],
+                      execution_time_ms: meta.execution_time_ms || 0,
+                      action: meta.action,
+                      entities_detected: meta.entities_detected || [],
+                      evidence_status: meta.evidence_status || 'sufficient',
+                      persona_name: meta.persona_name,
+                      ai_profile_version: meta.ai_profile_version,
+                    },
+                    follow_up_suggestions: meta.follow_up_suggestions || [],
+                    clarification_options: meta.clarification_options || [],
+                    execution_time_ms: meta.execution_time_ms,
+                  }
+                : m
+            )
+          );
+        },
+        onDone: () => {
+          if (flushTimer) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+          }
+          flushBuffer();
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tempAssistantId ? { ...m, isStreaming: false } : m
+            )
+          );
+          loadConversations();
+        },
+        onError: (err) => {
+          if (flushTimer) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+          }
+          flushBuffer();
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tempAssistantId
+                ? { ...m, isStreaming: false, interrupted: true }
+                : m
+            )
+          );
+          console.error('[ChatStudio] Stream error:', err);
+        },
+      });
     } catch (err) {
-      alert('GraphRAG synthesis error: ' + err.message);
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      flushBuffer();
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempAssistantId
+            ? { ...m, isStreaming: false, interrupted: true }
+            : m
+        )
+      );
     } finally {
+      if (flushTimer) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      flushBuffer();
       setSending(false);
     }
   };
+
 
   const handleCopyMessage = (msgId, text) => {
     navigator.clipboard.writeText(text);
@@ -415,6 +564,35 @@ export default function ChatStudio({ initialSourceScope = null }) {
                 {initialSourceScope ? `Scope: ${initialSourceScope.sourceName}` : 'Scope: All Knowledge Sources'}
               </span>
             </div>
+
+            {personas.length > 0 && (
+              <>
+                <span style={{ fontSize: '11.5px', color: 'var(--text-muted)' }}>·</span>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                  <Bot size={13} style={{ color: 'var(--accent-primary)' }} />
+                  <select
+                    value={selectedPersonaId || ''}
+                    onChange={(e) => setSelectedPersonaId(parseInt(e.target.value))}
+                    style={{
+                      height: '26px',
+                      fontSize: '11.5px',
+                      padding: '0 6px',
+                      background: 'var(--bg-surface-2)',
+                      border: '1px solid var(--border-hairline)',
+                      borderRadius: '6px',
+                      color: 'var(--text-primary)'
+                    }}
+                    title="Active Persona for this inquiry"
+                  >
+                    {personas.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} {p.is_default ? '(Default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Diagnostics Disclosure Dropdown */}
@@ -549,22 +727,37 @@ export default function ChatStudio({ initialSourceScope = null }) {
                       )}
 
                       <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                        {/* Text Bubble */}
-                        <div
-                          style={{
-                            padding: isUser ? '10px 16px' : '0 2px',
-                            borderRadius: isUser ? '10px' : '0',
-                            background: isUser ? 'var(--bg-surface-2)' : 'transparent',
-                            border: isUser ? '1px solid var(--border-hairline)' : 'none',
-                            color: 'var(--text-primary)',
-                            fontSize: '14px',
-                            lineHeight: 1.65,
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word'
-                          }}
-                        >
-                          {msg.content}
-                        </div>
+                        {/* Text Bubble / Markdown Message */}
+                        {isUser ? (
+                          <div
+                            style={{
+                              padding: '10px 16px',
+                              borderRadius: '10px',
+                              background: 'var(--bg-surface-2)',
+                              border: '1px solid var(--border-hairline)',
+                              color: 'var(--text-primary)',
+                              fontSize: '14px',
+                              lineHeight: 1.65,
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word'
+                            }}
+                          >
+                            {msg.content}
+                          </div>
+                        ) : (
+                          <div style={{ padding: '0 2px' }}>
+                            <MarkdownMessage
+                              content={msg.content}
+                              isStreaming={Boolean(msg.isStreaming)}
+                            />
+                            {msg.interrupted && (
+                              <div className="stream-interrupted-badge">
+                                <AlertCircle size={12} />
+                                <span>Response generation interrupted</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* Clarification Chips */}
                         {!isUser && clarificationOpts.length > 0 && (
@@ -613,7 +806,7 @@ export default function ChatStudio({ initialSourceScope = null }) {
 
                         {/* Evidence Bar & Copy Action */}
                         {!isUser && (
-                          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             {hasEvidence && (
                               <button
                                 onClick={() => openInspector(msg.id, citations, 'passages')}
@@ -623,6 +816,18 @@ export default function ChatStudio({ initialSourceScope = null }) {
                                 <FileText size={12} style={{ color: 'var(--accent-primary)' }} />
                                 <span>Supporting Sources ({sourceCount} passages · {graphCount} triples)</span>
                               </button>
+                            )}
+
+                            {citations?.persona_name && (
+                              <span style={{ fontSize: '10.5px', background: 'var(--bg-surface-3)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: '4px', fontWeight: 500 }}>
+                                {citations.persona_name}
+                              </span>
+                            )}
+
+                            {citations?.evidence_status && citations.evidence_status !== 'sufficient' && (
+                              <span style={{ fontSize: '10.5px', background: 'var(--accent-amber-subtle)', color: 'var(--accent-amber-text)', padding: '2px 7px', borderRadius: '4px', fontWeight: 500 }}>
+                                {citations.evidence_status}
+                              </span>
                             )}
 
                             {citations?.execution_time_ms && (

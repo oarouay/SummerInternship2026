@@ -19,8 +19,10 @@ import {
   Layers,
   MessageSquare
 } from 'lucide-react';
+import { useConfirm } from './ConfirmModal';
 
 export default function SourceManager({ onNavigateToAsk }) {
+  const confirm = useConfirm();
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -92,17 +94,28 @@ export default function SourceManager({ onNavigateToAsk }) {
   };
 
   const handleDelete = async (sourceId) => {
-    if (!confirm('Permanently delete this document and its associated vector embeddings and knowledge graph links?')) {
-      return;
-    }
+    const target = sources.find((s) => s.id === sourceId);
+    const docName = target?.name ? `"${target.name}"` : 'this document';
+
+    const confirmed = await confirm({
+      title: 'Permanently Delete Knowledge Document?',
+      description: `Are you sure you want to delete ${docName}? This will permanently remove the source file from organization storage, delete all associated chunk embeddings, and unlink its knowledge graph entities.`,
+      confirmText: 'Delete Document',
+      cancelText: 'Cancel',
+      variant: 'danger',
+      details: target?.chunks_count ? `${target.chunks_count} chunk embeddings and associated graph nodes will be permanently deleted.` : null
+    });
+    if (!confirmed) return;
+
     try {
       await sourcesApi.delete(sourceId);
       if (inspectSource && inspectSource.id === sourceId) {
         setInspectSource(null);
       }
       await fetchSources();
+      setFeedback({ type: 'success', text: `Document ${docName} deleted successfully.` });
     } catch (err) {
-      alert('Delete error: ' + err.message);
+      setFeedback({ type: 'error', text: 'Delete error: ' + err.message });
     }
   };
 

@@ -13,7 +13,8 @@ import {
   LogOut, 
   ShieldCheck,
   Building2,
-  ChevronDown
+  ChevronDown,
+  Sparkles
 } from 'lucide-react';
 
 export default function SidebarNav({
@@ -32,6 +33,7 @@ export default function SidebarNav({
     { id: 'ask', label: 'Ask', icon: MessageSquare, description: 'Questions & answers' },
     { id: 'knowledge', label: 'Knowledge', icon: Database, description: 'Documents & sources' },
     { id: 'explore', label: 'Explore', icon: Network, description: 'Entities & graph links' },
+    { id: 'ai-profile', label: 'AI Profile', icon: Sparkles, description: 'Enterprise policies & personas' },
     { id: 'assistant', label: 'Assistant', icon: Sliders, description: 'Behavior & model tuning' },
     { id: 'integrations', label: 'Integrations', icon: Code2, description: 'Website widget deploy' },
   ];

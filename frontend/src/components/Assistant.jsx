@@ -14,6 +14,8 @@ import {
   ShieldCheck,
   CheckCircle2
 } from 'lucide-react';
+import MarkdownMessage from './MarkdownMessage';
+
 
 export default function Assistant({ tenant }) {
   const [loading, setLoading] = useState(false);
@@ -33,7 +35,13 @@ export default function Assistant({ tenant }) {
   const [defaultMaxHops, setDefaultMaxHops] = useState(2);
   const [temperature, setTemperature] = useState(0.2);
 
-  // Gemini API Key State
+  // LLM API Key States (OpenAI & Gemini)
+  const [openaiApiKey, setOpenaiApiKey] = useState('');
+  const [openaiApiKeyPreview, setOpenaiApiKeyPreview] = useState(null);
+  const [clearOpenaiKeyRequested, setClearOpenaiKeyRequested] = useState(false);
+  const [validatingOpenaiKey, setValidatingOpenaiKey] = useState(false);
+  const [openaiValidationResult, setOpenaiValidationResult] = useState(null);
+
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [hasCustomApiKey, setHasCustomApiKey] = useState(false);
   const [apiKeyPreview, setApiKeyPreview] = useState(null);
@@ -61,6 +69,7 @@ export default function Assistant({ tenant }) {
         setTemperature(data.temperature ?? 0.2);
         setHasCustomApiKey(data.has_custom_api_key || false);
         setApiKeyPreview(data.gemini_api_key_preview || null);
+        setOpenaiApiKeyPreview(data.openai_api_key_preview || null);
         setSystemKeyConfigured(data.system_api_key_configured || false);
 
         setInitialData({
@@ -93,6 +102,8 @@ export default function Assistant({ tenant }) {
     defaultTopK !== initialData.defaultTopK ||
     defaultMaxHops !== initialData.defaultMaxHops ||
     temperature !== initialData.temperature ||
+    Boolean(openaiApiKey.trim()) ||
+    clearOpenaiKeyRequested ||
     Boolean(geminiApiKey.trim()) ||
     clearKeyRequested
   );
@@ -106,9 +117,26 @@ export default function Assistant({ tenant }) {
     setDefaultTopK(initialData.defaultTopK);
     setDefaultMaxHops(initialData.defaultMaxHops);
     setTemperature(initialData.temperature);
+    setOpenaiApiKey('');
+    setClearOpenaiKeyRequested(false);
+    setOpenaiValidationResult(null);
     setGeminiApiKey('');
     setClearKeyRequested(false);
     setValidationResult(null);
+  };
+
+  const handleTestOpenaiKey = async () => {
+    setValidatingOpenaiKey(true);
+    setOpenaiValidationResult(null);
+    try {
+      const keyToTest = openaiApiKey.trim() || undefined;
+      const res = await chatbotApi.validateOpenAIKey(keyToTest);
+      setOpenaiValidationResult(res);
+    } catch (err) {
+      setOpenaiValidationResult({ valid: false, message: err.message || 'Validation request failed' });
+    } finally {
+      setValidatingOpenaiKey(false);
+    }
   };
 
   const handleTestKey = async () => {
@@ -141,6 +169,12 @@ export default function Assistant({ tenant }) {
         temperature,
       };
 
+      if (clearOpenaiKeyRequested) {
+        payload.openai_api_key = '';
+      } else if (openaiApiKey.trim()) {
+        payload.openai_api_key = openaiApiKey.trim();
+      }
+
       if (clearKeyRequested) {
         payload.gemini_api_key = '';
       } else if (geminiApiKey.trim()) {
@@ -151,7 +185,10 @@ export default function Assistant({ tenant }) {
       if (updated) {
         setHasCustomApiKey(updated.has_custom_api_key || false);
         setApiKeyPreview(updated.gemini_api_key_preview || null);
+        setOpenaiApiKeyPreview(updated.openai_api_key_preview || null);
         setSystemKeyConfigured(updated.system_api_key_configured || false);
+        setOpenaiApiKey('');
+        setClearOpenaiKeyRequested(false);
         setGeminiApiKey('');
         setClearKeyRequested(false);
         setInitialData({
@@ -273,80 +310,164 @@ export default function Assistant({ tenant }) {
 
           {/* Section 3: Model Connection & API Credentials */}
           <div className="calm-panel" style={{ padding: '20px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <div>
-                <h2 style={{ fontSize: '14px', fontWeight: 600 }}>3. Google Gemini Model Connection</h2>
+                <h2 style={{ fontSize: '14px', fontWeight: 600 }}>3. LLM Model Connection & Credentials</h2>
                 <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                  Manage Gemini LLM generation credentials
+                  Configure OpenAI (gpt-4o-mini) and embedding credentials
                 </p>
               </div>
 
-              {hasCustomApiKey ? (
-                <span className="status-pill ready">Tenant Override Active</span>
+              {openaiApiKeyPreview ? (
+                <span className="status-pill ready">OpenAI Active ({openaiApiKeyPreview})</span>
+              ) : apiKeyPreview ? (
+                <span className="status-pill ready">Gemini Fallback Active</span>
               ) : systemKeyConfigured ? (
-                <span className="status-pill ready">System Managed Key Active</span>
+                <span className="status-pill ready">System Default Active</span>
               ) : (
                 <span className="status-pill failed">Missing Key</span>
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
-              <input
-                type="password"
-                placeholder={hasCustomApiKey && apiKeyPreview ? `Configured (${apiKeyPreview})` : "Enter Google Gemini API Key (AIzaSy...)"}
-                value={geminiApiKey}
-                onChange={(e) => setGeminiApiKey(e.target.value)}
-                style={{ flex: 1 }}
-              />
+            {/* OpenAI Primary Configuration */}
+            <div style={{ marginBottom: '18px', paddingBottom: '16px', borderBottom: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  OpenAI API Key (Recommended)
+                </span>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                  Powers gpt-4o-mini & text-embedding-3-small
+                </span>
+              </div>
 
-              <button
-                type="button"
-                onClick={handleTestKey}
-                disabled={validatingKey}
-                className="btn btn-secondary"
-                style={{ padding: '8px 12px' }}
-              >
-                {validatingKey ? <RefreshCw size={13} className="spin" /> : <Key size={13} />}
-                <span>Validate Key</span>
-              </button>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+                <input
+                  type="password"
+                  placeholder={openaiApiKeyPreview ? `Configured (${openaiApiKeyPreview})` : "Enter OpenAI API Key (sk-...)"}
+                  value={openaiApiKey}
+                  onChange={(e) => setOpenaiApiKey(e.target.value)}
+                  style={{ flex: 1 }}
+                />
 
-              {hasCustomApiKey && (
                 <button
                   type="button"
-                  onClick={() => setClearKeyRequested(true)}
-                  className="btn btn-danger"
+                  onClick={handleTestOpenaiKey}
+                  disabled={validatingOpenaiKey}
+                  className="btn btn-secondary"
                   style={{ padding: '8px 12px' }}
-                  title="Remove tenant custom key and revert to system default"
                 >
-                  Remove Key
+                  {validatingOpenaiKey ? <RefreshCw size={13} className="spin" /> : <Key size={13} />}
+                  <span>Validate Key</span>
                 </button>
+
+                {openaiApiKeyPreview && (
+                  <button
+                    type="button"
+                    onClick={() => setClearOpenaiKeyRequested(true)}
+                    className="btn btn-danger"
+                    style={{ padding: '8px 12px' }}
+                    title="Remove tenant OpenAI key"
+                  >
+                    Remove Key
+                  </button>
+                )}
+              </div>
+
+              {clearOpenaiKeyRequested && (
+                <div style={{ fontSize: '11.5px', color: 'var(--accent-amber-text)', marginBottom: '8px' }}>
+                  OpenAI key removal pending. Click "Save changes" below to confirm.
+                </div>
+              )}
+
+              {openaiValidationResult && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '11.5px',
+                    background: openaiValidationResult.valid ? 'var(--accent-emerald-subtle)' : 'var(--accent-rose-subtle)',
+                    color: openaiValidationResult.valid ? 'var(--accent-emerald-text)' : 'var(--accent-rose-text)',
+                    border: `1px solid ${openaiValidationResult.valid ? 'var(--accent-emerald-border)' : 'var(--accent-rose-border)'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginTop: '6px'
+                  }}
+                >
+                  {openaiValidationResult.valid ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                  <span>{openaiValidationResult.message}</span>
+                </div>
               )}
             </div>
 
-            {clearKeyRequested && (
-              <div style={{ fontSize: '11.5px', color: 'var(--accent-amber-text)', marginBottom: '8px' }}>
-                Key removal pending. Click "Save changes" below to confirm and revert to system managed key.
+            {/* Google Gemini Fallback Configuration */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+                  Google Gemini API Key (Secondary Fallback)
+                </span>
+                {apiKeyPreview && <span className="status-pill ready" style={{ fontSize: '10px' }}>Active ({apiKeyPreview})</span>}
               </div>
-            )}
 
-            {validationResult && (
-              <div
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  fontSize: '11.5px',
-                  background: validationResult.valid ? 'var(--accent-emerald-subtle)' : 'var(--accent-rose-subtle)',
-                  color: validationResult.valid ? 'var(--accent-emerald-text)' : 'var(--accent-rose-text)',
-                  border: `1px solid ${validationResult.valid ? 'var(--accent-emerald-border)' : 'var(--accent-rose-border)'}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
-              >
-                {validationResult.valid ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                <span>{validationResult.message}</span>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px' }}>
+                <input
+                  type="password"
+                  placeholder={apiKeyPreview ? `Configured (${apiKeyPreview})` : "Enter Google Gemini API Key (AIzaSy...)"}
+                  value={geminiApiKey}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
+                  style={{ flex: 1, fontSize: '12px' }}
+                />
+
+                <button
+                  type="button"
+                  onClick={handleTestKey}
+                  disabled={validatingKey}
+                  className="btn btn-secondary"
+                  style={{ padding: '6px 10px', fontSize: '11.5px' }}
+                >
+                  {validatingKey ? <RefreshCw size={12} className="spin" /> : <Key size={12} />}
+                  <span>Validate</span>
+                </button>
+
+                {apiKeyPreview && (
+                  <button
+                    type="button"
+                    onClick={() => setClearKeyRequested(true)}
+                    className="btn btn-danger"
+                    style={{ padding: '6px 10px', fontSize: '11.5px' }}
+                    title="Remove Gemini custom key"
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
-            )}
+
+              {clearKeyRequested && (
+                <div style={{ fontSize: '11.5px', color: 'var(--accent-amber-text)', marginBottom: '8px' }}>
+                  Gemini key removal pending. Click "Save changes" below to confirm.
+                </div>
+              )}
+
+              {validationResult && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    fontSize: '11.5px',
+                    background: validationResult.valid ? 'var(--accent-emerald-subtle)' : 'var(--accent-rose-subtle)',
+                    color: validationResult.valid ? 'var(--accent-emerald-text)' : 'var(--accent-rose-text)',
+                    border: `1px solid ${validationResult.valid ? 'var(--accent-emerald-border)' : 'var(--accent-rose-border)'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginTop: '6px'
+                  }}
+                >
+                  {validationResult.valid ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                  <span>{validationResult.message}</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Section 4: Advanced Retrieval Hyperparameters */}
@@ -557,8 +678,8 @@ export default function Assistant({ tenant }) {
             </div>
 
             {testResponse ? (
-              <div style={{ background: 'var(--bg-surface-2)', padding: '12px', borderRadius: '8px', fontSize: '12.5px', color: 'var(--text-primary)', lineHeight: 1.6, maxHeight: '300px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
-                {testResponse.answer}
+              <div style={{ background: 'var(--bg-surface-2)', padding: '12px', borderRadius: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+                <MarkdownMessage content={testResponse.answer} />
               </div>
             ) : (
               <div style={{ color: 'var(--text-muted)', fontSize: '12px', textAlign: 'center', padding: '24px 0' }}>

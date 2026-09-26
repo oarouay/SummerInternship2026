@@ -615,3 +615,288 @@ input[type="range"] {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+/* ==========================================================================
+   Markdown Prose Styling (Claude / ChatGPT Typography Standard)
+   ========================================================================== */
+
+.markdown-content {
+  font-family: var(--font-body);
+  font-size: 14.5px;
+  line-height: 1.68;
+  color: var(--text-primary);
+  max-width: 72ch;
+  word-break: break-word;
+}
+
+/* Eliminate top/bottom margin collapse in message containers */
+.markdown-content > *:first-child {
+  margin-top: 0 !important;
+}
+
+.markdown-content > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Paragraphs */
+.markdown-p {
+  margin: 0.75em 0;
+}
+
+/* Headings */
+.markdown-h1 {
+  font-family: var(--font-display);
+  font-size: 1.35em;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 1.1em 0 0.5em 0;
+  letter-spacing: -0.015em;
+}
+
+.markdown-h2 {
+  font-family: var(--font-display);
+  font-size: 1.2em;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 1em 0 0.45em 0;
+  letter-spacing: -0.01em;
+}
+
+.markdown-h3 {
+  font-family: var(--font-display);
+  font-size: 1.08em;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0.85em 0 0.4em 0;
+}
+
+.markdown-h4 {
+  font-size: 0.98em;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0.75em 0 0.35em 0;
+}
+
+/* Strong (Semi-bold, natural blend) */
+.markdown-strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.markdown-em {
+  font-style: italic;
+  color: var(--text-primary);
+}
+
+/* Lists */
+.markdown-ul {
+  margin: 0.6em 0;
+  padding-left: 1.35em;
+  list-style-type: disc;
+}
+
+.markdown-ol {
+  margin: 0.6em 0;
+  padding-left: 1.35em;
+  list-style-type: decimal;
+}
+
+.markdown-li {
+  margin: 0.35em 0;
+  padding-left: 0.2em;
+  line-height: 1.62;
+}
+
+.markdown-ul::marker,
+.markdown-ol::marker {
+  color: var(--text-muted);
+}
+
+.markdown-li > p {
+  margin: 0;
+}
+
+/* Links */
+.markdown-link {
+  color: var(--accent-primary);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.markdown-link:hover {
+  text-decoration: none;
+  border-bottom-color: var(--accent-primary);
+}
+
+/* Blockquote */
+.markdown-blockquote {
+  margin: 0.85em 0;
+  padding: 0.4em 0.85em;
+  border-left: 3px solid var(--accent-primary-border);
+  background: var(--accent-primary-subtle);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* Code & Preformatted Blocks */
+.markdown-inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-surface-3);
+  color: var(--accent-primary);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--border-hairline);
+  white-space: break-spaces;
+}
+
+.markdown-pre {
+  margin: 0.85em 0;
+  padding: 12px 14px;
+  background: var(--bg-surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.markdown-code-block {
+  font-family: var(--font-mono);
+  font-size: inherit;
+  background: transparent;
+  padding: 0;
+  border: none;
+}
+
+/* Tables */
+.markdown-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin: 0.85em 0;
+}
+
+.markdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.markdown-th {
+  padding: 8px 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-surface-2);
+  border-bottom: 2px solid var(--border-subtle);
+}
+
+.markdown-td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-hairline);
+  color: var(--text-secondary);
+}
+
+.markdown-table tr:hover td {
+  background: var(--bg-surface-hover);
+}
+
+/* Horizontal Rule */
+.markdown-hr {
+  border: none;
+  height: 1px;
+  background: var(--border-hairline);
+  margin: 1.25em 0;
+}
+
+/* ==========================================================================
+   Typing Animation & Streaming Cursor (Emil Kowalski Craft Standards)
+   ========================================================================== */
+
+.streaming-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--accent-primary);
+  border-radius: 1.5px;
+  margin-left: 5px;
+  vertical-align: -1px;
+  animation: cursorPulse 0.85s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+@keyframes cursorPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.15;
+    transform: scale(0.92);
+  }
+}
+
+/* Soft chunk reveal transition */
+.markdown-content.is-streaming {
+  animation: softChunkEnter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes softChunkEnter {
+  from {
+    opacity: 0.88;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Interrupted Stream Badge */
+.stream-interrupted-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--accent-amber-text);
+  background: var(--accent-amber-subtle);
+  border: 1px solid var(--accent-amber-border);
+}
+
+@keyframes previewWindowPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes confirmBackdropFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes confirmModalPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
